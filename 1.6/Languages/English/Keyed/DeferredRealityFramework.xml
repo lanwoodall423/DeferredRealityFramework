@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <DeferredReality.FrameworkLabel>Deferred Reality Framework</DeferredReality.FrameworkLabel>
+  <DeferredReality.InspectorLabel>Deferred Reality Inspector</DeferredReality.InspectorLabel>
+  <DeferredReality.AuditPassed>Deferred Reality audit passed.</DeferredReality.AuditPassed>
+  <DeferredReality.AuditFailed>Deferred Reality audit found issues; see the log.</DeferredReality.AuditFailed>
+  <DeferredReality.CompressionVetoed>Compression was vetoed by the conservative safety pipeline.</DeferredReality.CompressionVetoed>
+</LanguageData>

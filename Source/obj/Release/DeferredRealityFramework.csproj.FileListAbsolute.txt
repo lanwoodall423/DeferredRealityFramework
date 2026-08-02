@@ -1,0 +1,7 @@
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Source\obj\Release\DeferredRealityFramework.csproj.AssemblyReference.cache
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Source\obj\Release\DeferredRealityFramework.GeneratedMSBuildEditorConfig.editorconfig
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Source\obj\Release\DeferredRealityFramework.csproj.CoreCompileInputs.cache
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\1.6\Assemblies\DeferredRealityFramework.dll
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\1.6\Assemblies\DeferredRealityFramework.xml
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Source\obj\Release\DeferredRealityFramework.dll
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Source\obj\Release\DeferredRealityFramework.xml
