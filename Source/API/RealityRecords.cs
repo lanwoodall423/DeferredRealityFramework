@@ -645,6 +645,8 @@ namespace DeferredReality.API
         public string destinationRegionId;
         public string edge;
         public string pawnLoadIds;
+        public int sourceCellX = -1;
+        public int sourceCellZ = -1;
         public long createdTick;
         public long updatedTick;
         public RealityTransferStatus status = RealityTransferStatus.Prepared;
@@ -659,6 +661,8 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref destinationRegionId, "destinationRegionId");
             Scribe_Values.Look(ref edge, "edge");
             Scribe_Values.Look(ref pawnLoadIds, "pawnLoadIds");
+            Scribe_Values.Look(ref sourceCellX, "sourceCellX", -1);
+            Scribe_Values.Look(ref sourceCellZ, "sourceCellZ", -1);
             Scribe_Values.Look(ref createdTick, "createdTick");
             Scribe_Values.Look(ref updatedTick, "updatedTick");
             Scribe_Values.Look(ref status, "status", RealityTransferStatus.Prepared);

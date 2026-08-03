@@ -72,7 +72,8 @@ namespace DeferredReality.API
                 {
                     var issues = new List<RealityVeto>();
                     if (migrationHandler.TryMigrate(world, "provider-schema", 0, provider.Registration.schemaVersion, issues) && issues.Count == 0)
-                        world.CommitMigration(provider.Registration.providerId, "provider-schema", provider.Registration.schemaVersion, "provider-schema-v1");
+                        world.CommitMigration(provider.Registration.providerId, "provider-schema", provider.Registration.schemaVersion,
+                            "provider-schema-v" + provider.Registration.schemaVersion);
                     else if (issues.Count > 0)
                         world.Quarantine("provider-migration", provider.Registration.providerId, provider.Registration.providerId,
                             string.Join("; ", issues.Select(item => item.ToString()).ToArray()));

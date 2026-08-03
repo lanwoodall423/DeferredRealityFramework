@@ -377,6 +377,17 @@ namespace DeferredReality.API
             return true;
         }
 
+        /// <summary>Updates one process payload in place so a provider can persist an execution stage safely.</summary>
+        public bool UpdateProcessPayload(string processId, string payload)
+        {
+            RealityThreadGuard.RequireMainThread();
+            RealityProcessRecord process = ProcessRecord(processId);
+            if (process == null || payload == null) return false;
+            process.payload = payload;
+            Touch("process.payload", process.providerId, process.regionId, process.processId);
+            return true;
+        }
+
         /// <summary>Records an observation without changing objective population data.</summary>
         public bool AddObservation(RealityObservationInput input)
         {
@@ -445,6 +456,46 @@ namespace DeferredReality.API
             MarkMapActive(id, map);
             Touch("map.mapped", "core", id.ToString(), map.uniqueID.ToString());
             return id;
+        }
+
+        /// <summary>Associates a map with an explicit stable region, preserving the legacy tile-based overload.</summary>
+        public RealityRegionId RegisterMap(Map map, RealityRegionId regionId)
+        {
+            RealityThreadGuard.RequireMainThread();
+            if (map == null || !regionId.IsValid) return default(RealityRegionId);
+            EnsureIndexes();
+            if (!map.Tile.Valid || map.Tile != (PlanetTile)regionId.WorldTile)
+            {
+                QuarantineInternal("map", map.uniqueID.ToString(), "core",
+                    "Explicit map region does not match the map world tile.", regionId.ToString(), Now);
+                return default(RealityRegionId);
+            }
+            if (regionByLegacyMapId.TryGetValue(map.uniqueID, out string previousId) && previousId != regionId.ToString())
+            {
+                RealityRegionDescriptor previous = RegionRecord(previousId);
+                if (previous != null && previous.activeMapUniqueId == map.uniqueID)
+                {
+                    previous.activeMapUniqueId = -1;
+                    previous.fidelity = populations.Any(item => item?.regionId == previous.regionId)
+                        ? RealityFidelity.Statistical : RealityFidelity.Dormant;
+                }
+                mapAliases.RemoveAll(item => item != null && item.legacyMapId == map.uniqueID);
+            }
+            EnsureRegion(regionId, "World tile " + regionId.WorldTile, Now);
+            RealityMapAlias alias = mapAliases.FirstOrDefault(item => item != null && item.legacyMapId == map.uniqueID);
+            if (alias == null)
+            {
+                mapAliases.Add(new RealityMapAlias { legacyMapId = map.uniqueID, regionId = regionId.ToString(), migratedTick = Now });
+            }
+            else
+            {
+                alias.regionId = regionId.ToString();
+                alias.migratedTick = Now;
+            }
+            regionByLegacyMapId[map.uniqueID] = regionId.ToString();
+            MarkMapActive(regionId, map);
+            Touch("map.mapped", regionId.ProviderNamespace, regionId.ToString(), map.uniqueID.ToString());
+            return regionId;
         }
 
         /// <summary>Releases the active-map link while preserving latent state for future materialization.</summary>

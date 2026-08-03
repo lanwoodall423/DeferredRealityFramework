@@ -76,6 +76,9 @@
         <member name="T:DeferredReality.API.RealityAdjacentTransferRequest">
             <summary>Explicit transfer request. No pawn is captured unless a host accepts it.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityAdjacentTransferRequest.providerId">
+            <summary>Optional provider owner when the surface region identity is shared.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityAdjacentTransferResult">
             <summary>Result of an adjacent transfer attempt, including safe world-travel fallback.</summary>
         </member>
@@ -97,11 +100,20 @@
         <member name="T:DeferredReality.API.RealityMaterializationRequest">
             <summary>Requested materialization target.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityMaterializationRequest.providerId">
+            <summary>Optional provider that owns this materialization when the region identity is shared.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityMaterializationRequest.targetAnchorId">
+            <summary>Optional identity-bearing anchor selected for this materialization.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityMaterializationPlan">
             <summary>Side-effect-free materialization plan.</summary>
         </member>
         <member name="P:DeferredReality.API.RealityMaterializationPlan.ActiveMap">
             <summary>Map to use if one is already active, otherwise null until a host factory creates one.</summary>
+        </member>
+        <member name="P:DeferredReality.API.RealityMaterializationPlan.TargetAnchorId">
+            <summary>Optional selected anchor copied from the request for host factories.</summary>
         </member>
         <member name="P:DeferredReality.API.RealityMaterializationPlan.Steps">
             <summary>Provider and core plan steps.</summary>
@@ -499,11 +511,17 @@
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ScheduleProcess(DeferredReality.API.RealityProcessRecord)">
             <summary>Schedules or updates one stable process.</summary>
         </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UpdateProcessPayload(System.String,System.String)">
+            <summary>Updates one process payload in place so a provider can persist an execution stage safely.</summary>
+        </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.AddObservation(DeferredReality.API.RealityObservationInput)">
             <summary>Records an observation without changing objective population data.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RegisterMap(Verse.Map)">
             <summary>Associates an active map with a stable region and stores only the map ID as a legacy alias/link.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RegisterMap(Verse.Map,DeferredReality.API.RealityRegionId)">
+            <summary>Associates a map with an explicit stable region, preserving the legacy tile-based overload.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UnregisterMap(Verse.Map)">
             <summary>Releases the active-map link while preserving latent state for future materialization.</summary>
@@ -604,11 +622,17 @@
         <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.RegisterTransferHost(DeferredReality.API.IAdjacentRegionTransferHost)">
             <summary>Registers the host that owns group transfer implementation.</summary>
         </member>
+        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.RegisterTransferHost(System.String,DeferredReality.API.IAdjacentRegionTransferHost)">
+            <summary>Registers a transfer host under one provider namespace.</summary>
+        </member>
         <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.EnsureCardinalNeighbors(Verse.Map)">
             <summary>Creates stable cardinal neighbor descriptors and bidirectional links.</summary>
         </member>
         <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.TryTransfer(DeferredReality.API.RealityAdjacentTransferRequest)">
             <summary>Attempts an explicitly prepared transfer; otherwise returns safe world-travel fallback.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.RecoverTransfer(DeferredReality.API.RealityAdjacentTransferRequest)">
+            <summary>Rolls back an interrupted transfer journal when its host can still locate the party.</summary>
         </member>
         <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.Warm(DeferredReality.API.RealityRegionId,Verse.Map)">
             <summary>Stores a bounded warm-map reference without removing a Map.</summary>
@@ -638,7 +662,16 @@
             <summary>Host-provided factories for normal RimWorld map creation.</summary>
         </member>
         <member name="P:DeferredReality.Materialization.RealityMapFactoryRegistry.Factory">
-            <summary>Optional active factory. Null means framework-only planning is available.</summary>
+            <summary>Optional legacy fallback factory. Null means framework-only planning is available.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.Register(System.String,DeferredReality.API.IRealityMapFactory)">
+            <summary>Registers a factory for one provider namespace without taking the legacy fallback slot.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.Unregister(System.String,DeferredReality.API.IRealityMapFactory)">
+            <summary>Removes a provider-scoped factory if it is the registered instance.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.TryGet(System.String,DeferredReality.API.IRealityMapFactory@)">
+            <summary>Resolves a provider-scoped factory, then the legacy fallback.</summary>
         </member>
         <member name="T:DeferredReality.Materialization.RealityMaterializationService">
             <summary>Transactional materialization of latent regions.</summary>

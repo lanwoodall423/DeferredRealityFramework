@@ -67,7 +67,31 @@ namespace DeferredReality.Simulation
             RealityPopulationRecord source = world.PopulationRecord(sourcePopulationId)?.Clone();
             RealityPopulationRecord destination = world.PopulationRecord(destinationPopulationId)?.Clone();
             if (source == null || destination == null) { result.error = "Source or destination population is missing."; return result; }
+            if (!string.Equals(source.providerId, destination.providerId, StringComparison.Ordinal) ||
+                (providerId != null && !string.Equals(providerId, source.providerId, StringComparison.Ordinal)))
+            {
+                result.error = "Population transfer crosses provider ownership.";
+                return result;
+            }
             if (!source.migrationAllowed || !destination.migrationAllowed) { result.error = "Population migration is disabled."; return result; }
+            if (RealityProviderRegistry.TryGet(source.providerId, out IRealityProvider registered) && registered is IPopulationProvider populationProvider)
+            {
+                var vetoes = new List<RealityVeto>();
+                bool allowed;
+                try { allowed = populationProvider.CanChangePopulation(source.Clone(), "transfer", vetoes); }
+                catch (Exception exception)
+                {
+                    allowed = false;
+                    vetoes.Add(new RealityVeto("provider.exception", exception.Message, source.providerId, 3));
+                }
+                if (!allowed || vetoes.Count > 0)
+                {
+                    result.error = vetoes.Count > 0
+                        ? string.Join("; ", vetoes.Select(item => item.ToString()).ToArray())
+                        : "Provider vetoed population transfer.";
+                    return result;
+                }
+            }
             if (source.amount < amount) { result.error = "Source population cannot satisfy the exact transfer."; return result; }
             RealityWorldState state = world.CaptureState();
             source.amount -= amount;

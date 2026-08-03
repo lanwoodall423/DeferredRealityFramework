@@ -12,8 +12,40 @@ namespace DeferredReality.Materialization
     /// <summary>Host-provided factories for normal RimWorld map creation.</summary>
     public static class RealityMapFactoryRegistry
     {
-        /// <summary>Optional active factory. Null means framework-only planning is available.</summary>
-        public static IRealityMapFactory Factory { get; set; }
+        private static readonly Dictionary<string, IRealityMapFactory> ProviderFactories =
+            new Dictionary<string, IRealityMapFactory>(StringComparer.Ordinal);
+        private static IRealityMapFactory fallbackFactory;
+
+        /// <summary>Optional legacy fallback factory. Null means framework-only planning is available.</summary>
+        public static IRealityMapFactory Factory
+        {
+            get { return fallbackFactory; }
+            set { fallbackFactory = value; }
+        }
+
+        /// <summary>Registers a factory for one provider namespace without taking the legacy fallback slot.</summary>
+        public static bool Register(string providerId, IRealityMapFactory factory)
+        {
+            if (string.IsNullOrWhiteSpace(providerId) || factory == null) return false;
+            ProviderFactories[providerId.Trim()] = factory;
+            return true;
+        }
+
+        /// <summary>Removes a provider-scoped factory if it is the registered instance.</summary>
+        public static bool Unregister(string providerId, IRealityMapFactory factory = null)
+        {
+            if (string.IsNullOrWhiteSpace(providerId) || !ProviderFactories.TryGetValue(providerId.Trim(), out IRealityMapFactory current)) return false;
+            if (factory != null && !ReferenceEquals(factory, current)) return false;
+            return ProviderFactories.Remove(providerId.Trim());
+        }
+
+        /// <summary>Resolves a provider-scoped factory, then the legacy fallback.</summary>
+        public static bool TryGet(string providerId, out IRealityMapFactory factory)
+        {
+            if (!string.IsNullOrWhiteSpace(providerId) && ProviderFactories.TryGetValue(providerId.Trim(), out factory)) return true;
+            factory = fallbackFactory;
+            return factory != null;
+        }
     }
 
     /// <summary>Transactional materialization of latent regions.</summary>
@@ -35,11 +67,13 @@ namespace DeferredReality.Materialization
                 return result;
             }
             var plan = new RealityMaterializationPlan();
+            plan.TargetAnchorId = request.targetAnchorId;
             plan.AddStep("validate-region");
             Map activeMap = Find.Maps?.FirstOrDefault(map => map != null && map.uniqueID == region.activeMapUniqueId);
             plan.ActiveMap = activeMap;
             if (activeMap != null) plan.AddStep("reuse-active-map");
             List<IMaterializationProvider> providers = RealityProviderRegistry.OfType<IMaterializationProvider>()
+                .Where(provider => AppliesToRequest(provider, request))
                 .OrderBy(item => item.Order).ThenBy(item => ProviderId(item), StringComparer.Ordinal).ToList();
             foreach (IMaterializationProvider provider in providers)
             {
@@ -73,22 +107,29 @@ namespace DeferredReality.Materialization
                 return result;
             }
             Map createdMap = null;
+            IRealityMapFactory selectedFactory = null;
             bool committedMutation = false;
             var context = new RealityMaterializationContext(world, request, plan, activeMap);
             try
             {
                 if (plan.ActiveMap == null)
                 {
-                    if (RealityMapFactoryRegistry.Factory == null)
+                    string factoryProviderId = string.IsNullOrEmpty(request.providerId)
+                        ? request.regionId.ProviderNamespace : request.providerId;
+                    if (!RealityMapFactoryRegistry.TryGet(factoryProviderId, out selectedFactory))
                     {
+                        world.RestoreState(state);
                         result.error = "No map factory is registered for this region.";
+                        result.rolledBack = true;
                         result.vetoes = new[] { new RealityVeto("materialization.map-factory-unavailable", "The framework does not create maps implicitly.", "core", 2) };
                         result.steps = plan.Steps.ToList();
                         return result;
                     }
-                    if (!RealityMapFactoryRegistry.Factory.TryCreateMap(request.regionId, plan, out createdMap, out string diagnostic) || createdMap == null)
+                    if (!selectedFactory.TryCreateMap(request.regionId, plan, out createdMap, out string diagnostic) || createdMap == null)
                     {
+                        world.RestoreState(state);
                         result.error = diagnostic ?? "The host map factory could not create a normal Map.";
+                        result.rolledBack = true;
                         result.vetoes = new[] { new RealityVeto("materialization.map-create-failed", result.error, "core", 3) };
                         result.steps = plan.Steps.ToList();
                         return result;
@@ -99,7 +140,9 @@ namespace DeferredReality.Materialization
                 }
                 foreach (IMaterializationProvider provider in providers) provider.Apply(context);
                 plan.AddStep("provider-plans-applied");
-                RealityConstraintService.Resolve(world, request.regionId, request.now);
+                RealityConstraintResolutionResult constraintResult = RealityConstraintService.Resolve(world, request.regionId, request.now);
+                if (constraintResult.conflicted > 0)
+                    throw new RealityTransitionException("Materialization has unresolved historical constraint conflicts.");
                 plan.AddStep("constraints-resolved");
                 foreach (IAnchorProvider anchorProvider in RealityProviderRegistry.OfType<IAnchorProvider>())
                 {
@@ -136,9 +179,9 @@ namespace DeferredReality.Materialization
                     try { providers[i].Rollback(context); } catch (Exception rollbackException) { Log.Error("Deferred Reality materialization rollback failed: " + rollbackException); }
                 }
                 world.RestoreState(state);
-                if (createdMap != null && RealityMapFactoryRegistry.Factory != null)
+                if (createdMap != null && selectedFactory != null)
                 {
-                    try { RealityMapFactoryRegistry.Factory.RemoveMap(createdMap); } catch (Exception rollbackException) { Log.Error("Deferred Reality map removal rollback failed: " + rollbackException); }
+                    try { selectedFactory.RemoveMap(createdMap); } catch (Exception rollbackException) { Log.Error("Deferred Reality map removal rollback failed: " + rollbackException); }
                 }
                 result.error = exception.Message;
                 result.rolledBack = !committedMutation;
@@ -150,8 +193,20 @@ namespace DeferredReality.Materialization
 
         private static string ProviderId(object provider)
         {
+            if (provider is IRealityProvider realityProvider)
+                return realityProvider.Registration?.providerId ?? provider.GetType().FullName ?? string.Empty;
             if (provider is IRealityProviderProviderId id) return id.ProviderId;
             return provider?.GetType().FullName ?? string.Empty;
+        }
+
+        private static bool AppliesToRequest(IMaterializationProvider provider, RealityMaterializationRequest request)
+        {
+            if (!(provider is IRealityProvider owner)) return true;
+            string ownerId = owner.Registration?.providerId;
+            if (string.IsNullOrEmpty(ownerId)) return false;
+            string requestOwner = request == null || string.IsNullOrEmpty(request.providerId)
+                ? request?.regionId.ProviderNamespace : request.providerId;
+            return string.Equals(requestOwner, ownerId, StringComparison.Ordinal);
         }
 
         private interface IRealityProviderProviderId
@@ -171,7 +226,10 @@ namespace DeferredReality.Materialization
             if (request == null || request.Map == null) vetoes.Add(new RealityVeto("compression.no-map", "No active map was supplied.", "core", 2));
             else
             {
-                vetoes.Add(new RealityVeto("compression.generic-disabled", "Generic Map compression is not safe in framework v1.", "core", 2));
+                bool providerScoped = RealityProviderRegistry.OfType<IRealityProvider>()
+                    .Any(provider => provider.Registration?.providerId == request.regionId.ProviderNamespace && provider is ICompressionProvider);
+                if (!providerScoped)
+                    vetoes.Add(new RealityVeto("compression.generic-disabled", "No provider owns a safe compression projection for this region.", "core", 2));
                 foreach (Pawn pawn in request.Map.mapPawns?.AllPawnsSpawned ?? Enumerable.Empty<Pawn>())
                 {
                     if (pawn == null) continue;

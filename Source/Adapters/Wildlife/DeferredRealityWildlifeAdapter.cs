@@ -2,19 +2,21 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using DeferredReality.API;
+using DeferredReality.Materialization;
 using DeferredReality.Runtime;
 using DeferredReality.Simulation;
 using HarmonyLib;
 using Herds;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
 namespace DeferredReality.Wildlife
 {
     /// <summary>Wildlife adapter. Regional truth is imported into framework populations; active AI remains Wildlife-owned.</summary>
-    public sealed class WildlifeRealityProvider : IRealityProvider, IRealityProcessProvider, IPopulationProvider,
-        IAnchorProvider, IConstraintResolver, IRealityDiagnosticsProvider
+    public sealed partial class WildlifeRealityProvider : IRealityProvider, IRealityProcessProvider, IPopulationProvider,
+        IAnchorProvider, IConstraintResolver, IMaterializationProvider, IAdjacentRegionTransferHost, IRealityDiagnosticsProvider
     {
         public const string ProviderId = "lan.wildlife";
         private DeferredRealityWorldComponent attachedWorld;
@@ -28,7 +30,8 @@ namespace DeferredReality.Wildlife
             schemaVersion = 1,
             order = 100,
             capabilities = RealityProviderCapability.Populations | RealityProviderCapability.Processes |
-                RealityProviderCapability.Anchors | RealityProviderCapability.Constraints | RealityProviderCapability.Diagnostics
+                RealityProviderCapability.Anchors | RealityProviderCapability.Constraints |
+                RealityProviderCapability.Materialization | RealityProviderCapability.Diagnostics
         };
 
         public void OnRegistered(RealityProviderContext context)
@@ -61,10 +64,14 @@ namespace DeferredReality.Wildlife
             RealityThreadGuard.RequireMainThread();
             RealityRegionId regionId = world.RegisterMap(map);
             if (!regionId.IsValid) return;
+            if (IsMaterializing(regionId)) return;
             string consumerId = "regional:" + regionId;
             if (world.IsMigrationCommitted(ProviderId, consumerId, 1))
             {
                 map.GetComponent<WildlifeDeferredProjectionMapComponent>();
+                EnsureAdjacentTopology(world, regionId);
+                ReindexAnchors(world, regionId);
+                SyncMap(map);
                 return;
             }
             RegionalWildlifeMapComponent legacy = map.GetComponent<RegionalWildlifeMapComponent>();
@@ -163,6 +170,8 @@ namespace DeferredReality.Wildlife
                 }
                 world.CommitMigration(ProviderId, consumerId, 1, "wildlife-regional-v1");
                 map.GetComponent<WildlifeDeferredProjectionMapComponent>();
+                EnsureAdjacentTopology(world, regionId);
+                ReindexAnchors(world, regionId);
             }
             catch (Exception exception)
             {
@@ -177,6 +186,7 @@ namespace DeferredReality.Wildlife
             RealityRegionId regionId = attachedWorld.RegisterMap(map);
             RegionalWildlifeMapComponent legacy = map.GetComponent<RegionalWildlifeMapComponent>();
             if (legacy == null) return;
+            EnsureAdjacentTopology(attachedWorld, regionId);
             foreach (RegionalSpeciesRecord row in legacy.Records ?? Array.Empty<RegionalSpeciesRecord>())
             {
                 if (row?.species == null) continue;
@@ -215,6 +225,7 @@ namespace DeferredReality.Wildlife
             population.established = population.established || population.amount > 0f;
             population.lastUpdateTick = execution.toTick;
             attachedWorld.UpsertPopulation(population);
+            TryMigratePopulation(population, process, execution);
             return new RealityProcessResult { succeeded = true, nextDelayTicks = process.intervalTicks, analyticalSteps = execution.boundedStepCount };
         }
 
@@ -224,7 +235,19 @@ namespace DeferredReality.Wildlife
             return vetoes.Count == 0;
         }
 
-        public void ReconcileActiveMap(RealityProviderContext context, RealityPopulationRecord population, string payload) { }
+        public void ReconcileActiveMap(RealityProviderContext context, RealityPopulationRecord population, string payload)
+        {
+            if (context?.World == null || population == null || !RealityRegionId.TryParse(population.regionId, out RealityRegionId region)) return;
+            Map map = Find.Maps?.FirstOrDefault(candidate => candidate != null && candidate.uniqueID ==
+                context.World.RegionSnapshots().FirstOrDefault(item => item.id == region)?.activeMapUniqueId);
+            RegionalWildlifeMapComponent legacy = map?.GetComponent<RegionalWildlifeMapComponent>();
+            RegionalSpeciesRecord row = legacy?.Records?.FirstOrDefault(item =>
+                item?.species?.defName == SpeciesFromSubject(population.subjectId));
+            if (row == null) return;
+            row.population = population.amount;
+            row.previousPopulation = population.amount;
+            row.lastUpdateTick = (int)Math.Min(int.MaxValue, context.Now);
+        }
 
         public bool ValidateAnchor(RealityAnchorRecord anchor, IList<RealityVeto> vetoes)
         {
@@ -233,7 +256,8 @@ namespace DeferredReality.Wildlife
             return vetoes.Count == 0;
         }
 
-        public void OnAnchorMaterialized(RealityProviderContext context, RealityAnchorRecord anchor) { }
+        public void OnAnchorMaterialized(RealityProviderContext context, RealityAnchorRecord anchor) =>
+            ReconcileMaterializedAnchor(context, anchor);
 
         public bool CanResolve(RealityConstraint constraint) => constraint?.providerId == ProviderId && constraint.typeId == "departure";
 
@@ -256,7 +280,14 @@ namespace DeferredReality.Wildlife
         {
             int populations = context.World?.PopulationSnapshots(providerId: ProviderId).Count ?? 0;
             int anchors = context.World?.AnchorSnapshots(providerId: ProviderId).Count ?? 0;
-            return new[] { "wildlife populations=" + populations + " anchors=" + anchors + " regional-authority=framework" };
+            int links = context.World?.TopologySnapshots().Count(item => item?.kind == "cardinal-surface") ?? 0;
+            int materialized = context.World?.RegionSnapshots().Count(item => item?.fidelity == RealityFidelity.Materialized) ?? 0;
+            int transfers = context.World?.TransferJournalSnapshots().Count ?? 0;
+            return new[]
+            {
+                "wildlife populations=" + populations + " anchors=" + anchors + " regional-authority=framework",
+                "wildlife cardinal-links=" + links + " materialized-regions=" + materialized + " transfer-journals=" + transfers
+            };
         }
 
         internal static string ProviderPopulationId(RealityRegionId regionId, string species) =>
@@ -300,6 +331,10 @@ namespace DeferredReality.Wildlife
         static WildlifeRealityIntegration()
         {
             RealityProviderRegistry.Register(Provider);
+            RealityMapFactoryRegistry.Register(WildlifeRealityProvider.ProviderId, new WildlifeMapFactory());
+            RealityAdjacentSurfaceService.RegisterTransferHost(WildlifeRealityProvider.ProviderId, Provider);
+            WildlifeDeferredRealityBridge.MaterializeBeyondMap = Provider.TryMaterializeTrail;
+            WildlifeDeferredRealityBridge.AdjacentRegionSummary = Provider.AdjacentRegionSummary;
             new Harmony("lan.deferredreality.wildlife").PatchAll();
         }
     }
@@ -343,6 +378,23 @@ namespace DeferredReality.Wildlife
                 !WildlifeRealityIntegration.Provider.IsOwned(__instance.ActiveMap);
         }
 
+        [HarmonyPatch(typeof(Pawn), nameof(Pawn.ExitMap))]
+        private static class AnimalDeparturePatch
+        {
+            private static void Prefix(Pawn __instance, ref WildlifeRealityProvider.WildlifeAnimalDeparture __state)
+            {
+                if (__instance?.Spawned != true || __instance.Faction != null || __instance.RaceProps?.Animal != true) return;
+                Map map = __instance.Map;
+                if (!WildlifeRealityIntegration.Provider.IsOwned(map)) return;
+                __state = WildlifeRealityIntegration.Provider.PrepareAnimalDeparture(map, __instance, __instance.Position);
+            }
+
+            private static void Postfix(WildlifeRealityProvider.WildlifeAnimalDeparture __state)
+            {
+                WildlifeRealityIntegration.Provider.CompleteAnimalDeparture(__state);
+            }
+        }
+
         [HarmonyPatch(typeof(RegionalWildlifeMapComponent), nameof(RegionalWildlifeMapComponent.NotifyLocalDeath))]
         private static class DeathPatch
         {
@@ -371,8 +423,23 @@ namespace DeferredReality.Wildlife
             private static bool Prefix(RegionalWildlifeMapComponent __instance, Pawn animal, bool respawningAfterLoad)
             {
                 if (respawningAfterLoad || animal?.def == null || !WildlifeRealityIntegration.Provider.IsOwned(__instance.ActiveMap)) return true;
-                RealityPopulationMutationResult result = Reconcile(__instance.ActiveMap, animal.def, 1f, "spawn:" + animal.thingIDNumber);
+                RealityPopulationMutationResult result = WildlifeRealityIntegration.Provider.ReconcileLocalSpawn(__instance.ActiveMap, animal);
                 return !result.duplicate;
+            }
+        }
+
+        [HarmonyPatch(typeof(RegionalWildlifeMapComponent), nameof(RegionalWildlifeMapComponent.ApplyExpeditionImpact))]
+        private static class ExpeditionImpactPatch
+        {
+            private static bool Prefix(RegionalWildlifeMapComponent __instance, ThingDef species,
+                float populationDelta, float confidenceGain)
+            {
+                if (!WildlifeRealityIntegration.Provider.IsOwned(__instance.ActiveMap)) return true;
+                RealityPopulationMutationResult result = WildlifeRealityIntegration.Provider.ApplyAggregateImpact(
+                    __instance.ActiveMap, species, populationDelta, confidenceGain,
+                    __instance.Records?.FirstOrDefault(item => item?.species == species)?.population.ToString("R") + ":" +
+                    __instance.Records?.FirstOrDefault(item => item?.species == species)?.confidence.ToString("R"));
+                return !(result.succeeded || result.duplicate);
             }
         }
 

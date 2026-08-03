@@ -97,12 +97,13 @@ and reported. Missing Defs remain as unresolved provider payload references rath
 than being silently deleted. A provider exception vetoes that provider's cleanup
 but does not make the framework save unloadable.
 
-## Planned phase boundary
+## Current phase boundary
 
-Phase 1 implements the public contracts, deterministic region/process/population
-core, save audit/quarantine path, cached diagnostic snapshots, and pure tests.
-Phase 2 adds Wildlife regional population import and reconciliation. Later phases
-add Wildlife anchors and deferred causes, natural-water Aquaculture integration,
-regional Horticulture flora, and finally an opt-in adjacent surface-region
-transfer experiment. No phase removes a legacy owner until its replacement has
-passed validation and a committed migration marker exists.
+The framework core, provider-scoped map factories, Wildlife regional population
+import, roaming anchors, analytical cardinal migration, active-map reconciliation,
+and opt-in adjacent transfer/materialization path are implemented. Wildlife still
+owns active herds, exact pawns, jobs, Lords, memories, and map AI; the framework
+owns only the canonical aggregate and identity projections. No legacy owner is
+removed until its replacement has passed validation and a committed migration
+marker exists. Frontier and other adapters remain provider-scoped and do not
+share Wildlife state.

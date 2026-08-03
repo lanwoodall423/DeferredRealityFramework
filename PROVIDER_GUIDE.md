@@ -61,7 +61,12 @@ amount and observation estimates are separate records.
 ## Transitions
 
 Planning must not mutate Verse or provider state. A host may register an
-`IRealityMapFactory` for normal map creation. The framework has no default map
-factory and refuses generic compression in v1. Providers must treat unknown
-components, active combat, Lords, mental states, jobs, reservations, quests,
-player-controlled pawns, and unique Things as veto conditions.
+`IRealityMapFactory` for normal map creation under its provider ID. A
+`RealityMaterializationRequest` should set `providerId` when the region identity
+is shared by multiple providers; only that provider's materialization stages are
+run and its factory is selected. The framework has no default map factory and
+refuses generic compression in v1. Providers must treat unknown components,
+active combat, Lords, mental states, jobs, reservations, quests,
+player-controlled pawns, and unique Things as veto conditions. Adjacent pawn
+movement is opt-in through `IAdjacentRegionTransferHost`; failed preparation or
+commit must leave the journal in safe fallback state.

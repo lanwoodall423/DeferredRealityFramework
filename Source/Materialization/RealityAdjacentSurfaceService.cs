@@ -13,10 +13,20 @@ namespace DeferredReality.Materialization
     public static class RealityAdjacentSurfaceService
     {
         private static readonly Dictionary<string, Map> WarmMaps = new Dictionary<string, Map>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, IAdjacentRegionTransferHost> ProviderHosts =
+            new Dictionary<string, IAdjacentRegionTransferHost>(StringComparer.Ordinal);
         private static IAdjacentRegionTransferHost transferHost;
 
         /// <summary>Registers the host that owns group transfer implementation.</summary>
         public static void RegisterTransferHost(IAdjacentRegionTransferHost host) => transferHost = host;
+
+        /// <summary>Registers a transfer host under one provider namespace.</summary>
+        public static bool RegisterTransferHost(string providerId, IAdjacentRegionTransferHost host)
+        {
+            if (string.IsNullOrWhiteSpace(providerId) || host == null) return false;
+            ProviderHosts[providerId.Trim()] = host;
+            return true;
+        }
 
         /// <summary>Creates stable cardinal neighbor descriptors and bidirectional links.</summary>
         public static IReadOnlyList<RealityRegionSnapshot> EnsureCardinalNeighbors(Map sourceMap)
@@ -80,7 +90,7 @@ namespace DeferredReality.Materialization
                 return result;
             }
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
-            if (world == null || request == null || request.sourceMap == null || request.destinationMap == null || transferHost == null)
+            if (world == null || request == null || request.sourceMap == null || request.destinationMap == null)
             {
                 result.fallbackToWorldTravel = true;
                 result.diagnostic = "No safe adjacent transfer host or materialized destination is available.";
@@ -88,6 +98,15 @@ namespace DeferredReality.Materialization
             }
             request.sourceRegionId = world.RegisterMap(request.sourceMap);
             request.destinationRegionId = world.RegisterMap(request.destinationMap);
+            if (string.IsNullOrEmpty(request.providerId)) request.providerId = request.sourceRegionId.ProviderNamespace;
+            IAdjacentRegionTransferHost host = ProviderHosts.TryGetValue(request.providerId ?? string.Empty, out IAdjacentRegionTransferHost scopedHost)
+                ? scopedHost : transferHost;
+            if (host == null)
+            {
+                result.fallbackToWorldTravel = true;
+                result.diagnostic = "No safe adjacent transfer host or materialized destination is available.";
+                return result;
+            }
             string pawnKey = string.Join("|", (request.pawns ?? Array.Empty<Pawn>()).Where(pawn => pawn != null)
                 .Select(pawn => pawn.GetUniqueLoadID()).OrderBy(value => value, StringComparer.Ordinal).ToArray());
             request.transferId = request.transferId ?? "transfer:" + RealityDeterminism.Combine(request.sourceRegionId.ToString(),
@@ -114,6 +133,8 @@ namespace DeferredReality.Materialization
                 destinationRegionId = request.destinationRegionId.ToString(),
                 edge = request.entryEdge,
                 pawnLoadIds = string.Join(",", (request.pawns ?? Array.Empty<Pawn>()).Where(pawn => pawn != null).Select(pawn => pawn.GetUniqueLoadID()).ToArray()),
+                sourceCellX = request.sourceCell.x,
+                sourceCellZ = request.sourceCell.z,
                 createdTick = world.Now,
                 updatedTick = world.Now,
                 status = RealityTransferStatus.Prepared
@@ -122,17 +143,17 @@ namespace DeferredReality.Materialization
             var vetoes = new List<RealityVeto>();
             try
             {
-                if (!transferHost.CanTransfer(request, vetoes) || vetoes.Count > 0)
+                if (!host.CanTransfer(request, vetoes) || vetoes.Count > 0)
                     throw new RealityTransitionHostException(vetoes.Count > 0 ? string.Join("; ", vetoes.Select(item => item.ToString()).ToArray()) : "Host vetoed transfer.");
                 journal.status = RealityTransferStatus.Acquiring;
                 journal.updatedTick = world.Now;
                 world.UpsertTransferJournal(journal);
-                if (!transferHost.Prepare(request, journal, out string prepareDiagnostic))
+                if (!host.Prepare(request, journal, out string prepareDiagnostic))
                     throw new RealityTransitionHostException(prepareDiagnostic ?? "Transfer preparation failed.");
                 journal.status = RealityTransferStatus.Committing;
                 journal.updatedTick = world.Now;
                 world.UpsertTransferJournal(journal);
-                if (!transferHost.Commit(request, journal, out string commitDiagnostic))
+                if (!host.Commit(request, journal, out string commitDiagnostic))
                     throw new RealityTransitionHostException(commitDiagnostic ?? "Transfer commit failed.");
                 journal.status = RealityTransferStatus.Completed;
                 journal.updatedTick = world.Now;
@@ -143,8 +164,8 @@ namespace DeferredReality.Materialization
             }
             catch (Exception exception)
             {
-                try { transferHost.Rollback(request, journal); } catch (Exception rollbackException) { Log.Error("Deferred Reality transfer rollback failed: " + rollbackException); }
-                journal.status = RealityTransferStatus.RolledBack;
+                try { host.Rollback(request, journal); } catch (Exception rollbackException) { Log.Error("Deferred Reality transfer rollback failed: " + rollbackException); }
+                journal.status = RealityTransferStatus.Fallback;
                 journal.diagnostic = exception.Message;
                 journal.updatedTick = world.Now;
                 world.UpsertTransferJournal(journal);
@@ -152,6 +173,65 @@ namespace DeferredReality.Materialization
                 result.fallbackToWorldTravel = true;
                 result.diagnostic = exception.Message;
                 result.vetoes = vetoes;
+                return result;
+            }
+        }
+
+        /// <summary>Rolls back an interrupted transfer journal when its host can still locate the party.</summary>
+        public static RealityAdjacentTransferResult RecoverTransfer(RealityAdjacentTransferRequest request)
+        {
+            RealityThreadGuard.RequireMainThread();
+            var result = new RealityAdjacentTransferResult();
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            if (world == null || request?.sourceMap == null || request.destinationMap == null)
+            {
+                result.fallbackToWorldTravel = true;
+                result.diagnostic = "Recovery requires both source and destination maps.";
+                return result;
+            }
+            request.sourceRegionId = world.RegisterMap(request.sourceMap);
+            request.destinationRegionId = world.RegisterMap(request.destinationMap);
+            if (string.IsNullOrEmpty(request.providerId)) request.providerId = request.sourceRegionId.ProviderNamespace;
+            if (!world.TryGetTransferJournal(request.transferId, out RealityTransferJournalRecord journal))
+            {
+                result.diagnostic = "No transfer journal exists for the requested recovery.";
+                return result;
+            }
+            if (journal.status == RealityTransferStatus.Completed)
+            {
+                result.succeeded = true;
+                result.diagnostic = "Transfer was already committed.";
+                return result;
+            }
+            if (journal.status == RealityTransferStatus.RolledBack || journal.status == RealityTransferStatus.Fallback)
+            {
+                result.rolledBack = true;
+                result.diagnostic = "Transfer was already rolled back or sent to fallback travel.";
+                return result;
+            }
+            IAdjacentRegionTransferHost host = ProviderHosts.TryGetValue(request.providerId ?? string.Empty, out IAdjacentRegionTransferHost scopedHost)
+                ? scopedHost : transferHost;
+            if (host == null)
+            {
+                result.fallbackToWorldTravel = true;
+                result.diagnostic = "No provider transfer host is registered for this journal.";
+                return result;
+            }
+            try
+            {
+                host.Rollback(request, journal);
+                journal.status = RealityTransferStatus.RolledBack;
+                journal.updatedTick = world.Now;
+                journal.diagnostic = "Interrupted transfer was explicitly rolled back.";
+                world.UpsertTransferJournal(journal);
+                result.rolledBack = true;
+                result.diagnostic = journal.diagnostic;
+                return result;
+            }
+            catch (Exception exception)
+            {
+                result.fallbackToWorldTravel = true;
+                result.diagnostic = exception.Message;
                 return result;
             }
         }

@@ -170,6 +170,8 @@ namespace DeferredReality.API
     /// <summary>Explicit transfer request. No pawn is captured unless a host accepts it.</summary>
     public sealed class RealityAdjacentTransferRequest
     {
+        /// <summary>Optional provider owner when the surface region identity is shared.</summary>
+        public string providerId;
         public Map sourceMap;
         public Map destinationMap;
         public RealityRegionId sourceRegionId;
@@ -241,6 +243,10 @@ namespace DeferredReality.API
     public sealed class RealityMaterializationRequest
     {
         public RealityRegionId regionId;
+        /// <summary>Optional provider that owns this materialization when the region identity is shared.</summary>
+        public string providerId;
+        /// <summary>Optional identity-bearing anchor selected for this materialization.</summary>
+        public string targetAnchorId;
         public long now;
         public string reason;
         public bool preserveObservedFacts = true;
@@ -255,6 +261,9 @@ namespace DeferredReality.API
 
         /// <summary>Map to use if one is already active, otherwise null until a host factory creates one.</summary>
         public Map ActiveMap { get; internal set; }
+
+        /// <summary>Optional selected anchor copied from the request for host factories.</summary>
+        public string TargetAnchorId { get; internal set; }
 
         /// <summary>Provider and core plan steps.</summary>
         public IReadOnlyList<string> Steps => steps;

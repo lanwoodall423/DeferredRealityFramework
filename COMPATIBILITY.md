@@ -28,6 +28,9 @@ The adapter boundary is conservative:
 - Generic pawn/Thing compression is vetoed.
 - The adjacent-region transfer path is opt-in experimental and currently falls
   back unless a safe host map factory and transfer transaction are registered.
+- Wildlife registers its provider-scoped map factory and adjacent transfer host
+  only when `DeferredReality.Wildlife.dll` is loaded; Frontier retains its own
+  provider-scoped factory and does not replace Wildlife's registration.
 
 Removal of an integration mod does not make framework state unloadable. Its
 provider payloads and records remain orphan-inspectable. Reinstalling the mod

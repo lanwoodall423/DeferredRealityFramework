@@ -25,8 +25,9 @@ region serialization, deterministic seeds, and deterministic RNG streams.
 ## Provider and in-game checks
 
 Wildlife: old regional records, roaming identity, exact-once local kill/birth,
-cooldown after hunting, expedition population target, trail causality, and no
-duplicate regional ticking.
+cooldown after hunting, expedition population target, trail causality, cardinal
+topology seeding, latent population migration, adjacent materialization,
+atomic pawn transfer/rollback, safe fallback, and no duplicate regional ticking.
 
 Aquaculture: natural river/coast migration links, closed-water isolation, catch
 exactness, species diversity/rarity, stable water IDs after topology rebuild,
@@ -37,6 +38,7 @@ Horticulture: deterministic latent flora, discovered variety anchors, existing
 palette/trait stability, and unchanged colony crops.
 
 Compatibility: framework alone, each adapter alone, all adapters together,
+provider-scoped factory load order and shared-region materialization,
 Knowledge Framework present/absent where optional, DevBridge absent/present,
 old saves, multiple maps, unsupported components, and removed providers.
 
