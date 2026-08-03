@@ -8,3 +8,4 @@ C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Tests\obj
 C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Tests\obj\Release\net472\DeferredReality.PureTests.csproj.CoreCompileInputs.cache
 C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Tests\obj\Release\net472\DeferredReality.PureTests.exe
 C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Tests\obj\Release\net472\DeferredReality.PureTests.pdb
+C:\Games\Steam\steamapps\common\RimWorld\Mods\DeferredRealityFramework\Tests\obj\Release\net472\DeferredReality.PureTests.sourcelink.json

@@ -1,3 +1,4 @@
+using System;
 using System.Reflection;
 using DeferredReality.API;
 using HarmonyLib;
@@ -22,10 +23,35 @@ namespace DeferredReality.Runtime
         public static void OnMapReady(Map map)
         {
             if (map == null) return;
+            if (!RealityThreadGuard.IsMainThread)
+            {
+                RunOnMainThread(() => OnMapReady(map));
+                return;
+            }
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
             if (world == null) return;
             world.RegisterMap(map);
             map.GetComponent<DeferredRealityMapProjectionComponent>();
+        }
+
+        /// <summary>Runs map-related mutations after RimWorld's worker-thread long event completes.</summary>
+        public static void RunOnMainThread(Action action)
+        {
+            if (action == null) return;
+            if (RealityThreadGuard.IsMainThread) action();
+            else LongEventHandler.ExecuteWhenFinished(action);
+        }
+
+        public static void OnMapDeinit(Map map)
+        {
+            if (map == null) return;
+            if (!RealityThreadGuard.IsMainThread)
+            {
+                RunOnMainThread(() => OnMapDeinit(map));
+                return;
+            }
+            Materialization.RealityAdjacentSurfaceService.Forget(map);
+            DeferredRealityWorldComponent.Current?.UnregisterMap(map);
         }
     }
 
@@ -54,8 +80,7 @@ namespace DeferredReality.Runtime
     {
         private static void Postfix(Map map)
         {
-            Materialization.RealityAdjacentSurfaceService.Forget(map);
-            DeferredRealityWorldComponent.Current?.UnregisterMap(map);
+            RealityMapLifecycle.OnMapDeinit(map);
         }
     }
 }

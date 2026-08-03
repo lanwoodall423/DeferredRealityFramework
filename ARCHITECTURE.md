@@ -68,6 +68,12 @@ The first implementation is deliberately conservative:
 - materialization and compression use prepare/validate/commit or rollback;
 - all analytical simulation uses stable seeded streams and bounded catch-up.
 
+RimWorld may invoke `Map.FinalizeInit` and map component initialization from a
+`LongEventHandler` worker thread. Framework map registration, de-registration,
+and adapter migrations therefore pass through `RealityMapLifecycle`; worker
+callbacks are deferred with `LongEventHandler.ExecuteWhenFinished` before any
+framework-owned or provider-owned mutable state is touched.
+
 ## Migration sequence
 
 1. Create or resolve a stable region for each active map and record the legacy map

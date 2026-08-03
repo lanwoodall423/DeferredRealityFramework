@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using DeferredReality.API;
 using DeferredReality.Materialization;
+using DeferredReality.Runtime;
 using DeferredReality.Simulation;
 using HarmonyLib;
 using HorticultureNovelSeeds;
@@ -52,8 +53,14 @@ namespace DeferredReality.Horticulture
 
         public void MigrateMap(Map map, DeferredRealityWorldComponent world = null)
         {
+            if (map == null) return;
+            if (!RealityThreadGuard.IsMainThread)
+            {
+                RealityMapLifecycle.RunOnMainThread(() => MigrateMap(map, world));
+                return;
+            }
             world = world ?? attachedWorld ?? DeferredRealityWorldComponent.Current;
-            if (world == null || map == null) return;
+            if (world == null) return;
             RealityRegionId region = world.RegisterMap(map);
             if (!region.IsValid) return;
             string consumer = "wild-flora:" + region;

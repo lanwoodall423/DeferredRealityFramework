@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using DeferredReality.API;
+using DeferredReality.Runtime;
 using DeferredReality.Simulation;
 using HarmonyLib;
 using Herds;
@@ -49,8 +50,14 @@ namespace DeferredReality.Wildlife
 
         public void MigrateMap(Map map, DeferredRealityWorldComponent world = null)
         {
+            if (map == null) return;
+            if (!RealityThreadGuard.IsMainThread)
+            {
+                RealityMapLifecycle.RunOnMainThread(() => MigrateMap(map, world));
+                return;
+            }
             world = world ?? attachedWorld ?? DeferredRealityWorldComponent.Current;
-            if (world == null || map == null) return;
+            if (world == null) return;
             RealityThreadGuard.RequireMainThread();
             RealityRegionId regionId = world.RegisterMap(map);
             if (!regionId.IsValid) return;

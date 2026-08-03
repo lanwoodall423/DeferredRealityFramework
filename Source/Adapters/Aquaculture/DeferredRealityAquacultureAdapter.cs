@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using AquacultureFishing;
 using DeferredReality.API;
+using DeferredReality.Runtime;
 using DeferredReality.Simulation;
 using HarmonyLib;
 using UnityEngine;
@@ -47,8 +48,14 @@ namespace DeferredReality.Aquaculture
 
         public void MigrateMap(Map map, DeferredRealityWorldComponent world = null)
         {
+            if (map == null) return;
+            if (!RealityThreadGuard.IsMainThread)
+            {
+                RealityMapLifecycle.RunOnMainThread(() => MigrateMap(map, world));
+                return;
+            }
             world = world ?? attachedWorld ?? DeferredRealityWorldComponent.Current;
-            if (world == null || map == null) return;
+            if (world == null) return;
             RealityRegionId region = world.RegisterMap(map);
             if (!region.IsValid) return;
             string consumer = "natural-water:" + region;

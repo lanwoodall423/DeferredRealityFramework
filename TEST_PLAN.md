@@ -18,6 +18,9 @@ region serialization, deterministic seeds, and deterministic RNG streams.
 - verify compression vetoes and rollback;
 - round-trip topology and map aliases;
 - capture diagnostics repeatedly without changing revisions.
+- load a new game through `LongEventHandler` map initialization and verify that
+  deferred map registration and all installed adapter migrations execute on the
+  main thread without blocking map readiness.
 
 ## Provider and in-game checks
 

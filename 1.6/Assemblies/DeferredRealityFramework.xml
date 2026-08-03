@@ -661,6 +661,9 @@
         <member name="T:DeferredReality.Runtime.RealityMapLifecycle">
             <summary>Tracks active maps as projections of stable regions.</summary>
         </member>
+        <member name="M:DeferredReality.Runtime.RealityMapLifecycle.RunOnMainThread(System.Action)">
+            <summary>Runs map-related mutations after RimWorld's worker-thread long event completes.</summary>
+        </member>
         <member name="T:DeferredReality.Runtime.DeferredRealityMapProjectionComponent">
             <summary>Minimal active-map projection. It owns no regional truth.</summary>
         </member>
