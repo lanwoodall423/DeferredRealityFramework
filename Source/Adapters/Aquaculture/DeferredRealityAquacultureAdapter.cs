@@ -27,7 +27,10 @@ namespace DeferredReality.Aquaculture
             schemaVersion = 1,
             order = 200,
             capabilities = RealityProviderCapability.Regions | RealityProviderCapability.Populations |
-                RealityProviderCapability.Processes | RealityProviderCapability.Observations | RealityProviderCapability.Diagnostics
+                RealityProviderCapability.Processes | RealityProviderCapability.Observations | RealityProviderCapability.Diagnostics,
+            // Event IDs are stable for the source catch/release and cannot legitimately replay after this window.
+            operationRetentionTicks = 3600000L,
+            compactableOperationKinds = new List<string> { "consume", "release", "active-map-reconcile" }
         };
 
         public void OnRegistered(RealityProviderContext context)

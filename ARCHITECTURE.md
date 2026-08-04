@@ -66,13 +66,60 @@ The first implementation is deliberately conservative:
 - provider payloads are versioned opaque records, not arbitrary Scribe/object
   resurrection;
 - materialization and compression use prepare/validate/commit or rollback;
-- all analytical simulation uses stable seeded streams and bounded catch-up.
+- all analytical simulation uses stable seeded streams and bounded catch-up;
+- the world tick uses a runtime earliest-due gate, so a steady-state tick with no
+  due process does not clone or sort the process collection;
+- due work is ordered by due tick, descending priority, provider ID, and process
+  ID. The provider receives the continuous `elapsedTicks` interval, while
+  analytical steps are `max(1, floor(elapsedTicks / intervalTicks))`, bounded by
+  the run budget.
+
+After preparation begins, materialization compensates only providers that
+prepared successfully, in reverse provider order. Framework state is restored
+after provider rollback and a newly created map is removed last; original and
+compensation failures are both reported. Transactional anchors use
+prepare/apply/validate/rollback and commit cleanup. Legacy
+`IAnchorProvider.OnAnchorMaterialized` remains a final, idempotent notification
+and is never called before validation.
+
+The process pause cause is persisted separately from the paused flag. Manual,
+provider-failure, and provider-requested pauses remain paused until an explicit
+resume. A missing provider creates a `ProviderUnavailable` suspension; registering
+that same provider reactivates only those suspensions and preserves payload,
+execution count, deterministic RNG epoch, and overdue timing.
+
+The world component performs conservative retention. Audit records are
+deduplicated and capped, observations evict the linear oldest record, terminal
+transfer journals use a 600000-tick/256-record policy while interrupted journals
+remain recoverable, and exactly-once markers without provider-declared expiry
+remain durable. Cancelled processes and legacy map aliases are compacted only
+after provider/reference checks prove recovery is unaffected.
 
 RimWorld may invoke `Map.FinalizeInit` and map component initialization from a
 `LongEventHandler` worker thread. Framework map registration, de-registration,
 and adapter migrations therefore pass through `RealityMapLifecycle`; worker
 callbacks are deferred with `LongEventHandler.ExecuteWhenFinished` before any
 framework-owned or provider-owned mutable state is touched.
+
+`RealityThreadGuard` starts unknown. Only the explicit `StaticConstructorOnStartup`
+framework lifecycle establishes the main-thread ID; mutating calls fail rather
+than adopting the first arbitrary caller, and provider registration from an
+unknown/worker callback is deferred through RimWorld's lifecycle bridge.
+
+Map identity is claim-based for nonstandard maps. A provider must claim pocket,
+interior, underground, vehicle, ship, or other custom maps with a stable region
+identity. Automatic `Surface(tile)` mapping is limited to an unambiguous standard
+surface map. Persisted aliases win during migration; a second live map or
+conflicting provider claims are quarantined and left unclaimed rather than
+overwriting `activeMapUniqueId`. The Harmony map-finalization postfix is the sole
+map readiness path.
+
+Constraint conflicts use explicit `conflictDomainKeys` and `conflictFacetKeys`.
+Only intersecting domains with incompatible semantics conflict. Legacy records
+fall back to provider/type plus affected subject, facet, or region, never subject
+alone. Duplicate repair keeps the first serialized valid slot, replacing its
+value only when a higher schema version or explicit newer update tick proves the
+later record newer.
 
 ## Migration sequence
 
@@ -107,3 +154,40 @@ owns only the canonical aggregate and identity projections. No legacy owner is
 removed until its replacement has passed validation and a committed migration
 marker exists. Frontier and other adapters remain provider-scoped and do not
 share Wildlife state.
+
+## Adjacent excursion boundary
+
+An adjacent map is an explicit, typed temporary-site role. Its marker records the
+provider, stable region, origin region/map, creation/access ticks, and lifecycle;
+it is applied after map generation so ordinary generation is not constrained by
+the construction policy. `WildlifeDeferredMapParent` supplies the provider-scoped
+region identity used by map claims. Marked maps are hard non-buildable work sites:
+build/install designators, blueprint placement, blueprint replacement, frame
+completion, and post-readiness artifact cleanup are guarded, while generation and
+deconstruction remain available.
+
+An excursion ticket is written only after a committed outbound transfer verifies
+the same Pawn instance on the destination map. It retains exact origin and inverse
+return-edge data, outbound/return journal IDs, heartbeat and lease deadlines, and
+retry/diagnostic state. The coarse monitor checks only marked maps and ticketed
+Pawns. Explicit completion, an expired lease with a meaningful-task-free Pawn, or
+an idle fallback can request return; combat, drafting, mental/medical/sleep states,
+carrying, player-forced jobs, provider jobs, and unresolved ownership always defer
+with backoff. Return uses the provider's reverse transfer and completes only after
+the same Pawn is on the exact origin map. Save/load reconciliation uses transfer
+journals and quarantine rather than reconstructing or guessing ownership.
+
+Warm adjacent maps are evicted by last access, never by dropping a dictionary
+reference. Eviction requires no active excursion, player pawn/prisoner/corpse/
+carried pawn/item, or interrupted recovery record, then successful provider
+compression and registered factory removal. Viewed maps and every veto remain
+diagnostically visible. Adjacent behavior remains behind the opt-in feature flag
+until the provider and in-game acceptance suite passes.
+
+Excursion ownership is also unique by Pawn load ID while a ticket is nonterminal.
+After load, a completed return journal finalizes an existing Returning ticket only
+when the exact Pawn is already on its recorded origin map. Provider removal retains
+the live map and ticket until the same scoped transfer host is registered again.
+Warm eviction is not a general-purpose map cache: dropping a reference is never
+eviction, and the adjacent feature remains experimental until the live acceptance
+suite passes.

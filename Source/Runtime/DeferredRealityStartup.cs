@@ -12,7 +12,8 @@ namespace DeferredReality.Runtime
     {
         static DeferredRealityStartup()
         {
-            RealityThreadGuard.InitializeMainThread();
+            // StaticConstructorOnStartup is RimWorld's explicit main-thread lifecycle point.
+            RealityThreadGuard.EstablishMainThread();
             new Harmony("lan.deferredreality.framework").PatchAll(Assembly.GetExecutingAssembly());
         }
     }
@@ -31,7 +32,7 @@ namespace DeferredReality.Runtime
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
             if (world == null) return;
             world.RegisterMap(map);
-            map.GetComponent<DeferredRealityMapProjectionComponent>();
+            Materialization.RealityAdjacentSurfaceService.TrackWarm(map);
         }
 
         /// <summary>Runs map-related mutations after RimWorld's worker-thread long event completes.</summary>
@@ -63,7 +64,7 @@ namespace DeferredReality.Runtime
         public override void FinalizeInit()
         {
             base.FinalizeInit();
-            RealityMapLifecycle.OnMapReady(map);
+            // Map.FinalizeInit Harmony postfix is the single readiness lifecycle path.
         }
 
         public override void MapComponentTick() { }
@@ -72,7 +73,12 @@ namespace DeferredReality.Runtime
     [HarmonyPatch(typeof(Map), nameof(Map.FinalizeInit))]
     internal static class MapFinalizeInitPatch
     {
-        private static void Postfix(Map __instance) => RealityMapLifecycle.OnMapReady(__instance);
+        private static void Postfix(Map __instance)
+        {
+            RealityMapLifecycle.OnMapReady(__instance);
+            Materialization.RealityAdjacentConstructionGuards.RemovePlayerConstructionArtifacts(__instance,
+                DeferredRealityWorldComponent.Current);
+        }
     }
 
     [HarmonyPatch(typeof(MapDeiniter), nameof(MapDeiniter.Deinit))]

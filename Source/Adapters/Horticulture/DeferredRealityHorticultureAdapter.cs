@@ -30,7 +30,10 @@ namespace DeferredReality.Horticulture
             order = 300,
             capabilities = RealityProviderCapability.Populations | RealityProviderCapability.Processes |
                 RealityProviderCapability.Constraints | RealityProviderCapability.Materialization | RealityProviderCapability.Observations |
-                RealityProviderCapability.Diagnostics
+                RealityProviderCapability.Diagnostics,
+            // Event IDs include stable plant identity and cannot legitimately replay after this window.
+            operationRetentionTicks = 3600000L,
+            compactableOperationKinds = new List<string> { "consume", "release", "active-map-reconcile" }
         };
 
         public int Order => 300;

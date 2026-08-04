@@ -54,12 +54,7 @@ namespace DeferredReality.Simulation
             options = options ?? RealityProcessRunOptions.Default;
             Stopwatch timer = Stopwatch.StartNew();
             var report = new RealityProcessRunReport();
-            List<RealityProcessRecord> due = world.ProcessSnapshots().Select(item => item.record)
-                .Where(item => item != null && !item.cancelled && !item.paused && item.nextDueTick <= now)
-                .OrderBy(item => item.nextDueTick)
-                .ThenByDescending(item => item.priority)
-                .ThenBy(item => item.providerId, StringComparer.Ordinal)
-                .ThenBy(item => item.processId, StringComparer.Ordinal).ToList();
+            List<RealityProcessRecord> due = world.DueProcessRecords(now);
             for (int i = 0; i < due.Count && report.attempted < Math.Max(1, options.maximumProcesses); i++)
             {
                 if (timer.ElapsedMilliseconds >= Math.Max(1, options.maximumMilliseconds)) break;
@@ -68,7 +63,10 @@ namespace DeferredReality.Simulation
                 report.attempted++;
                 if (!RealityProviderRegistry.TryGet(process.providerId, out IRealityProvider registered) || !(registered is IRealityProcessProvider provider))
                 {
-                    Pause(process, world, "Provider is unavailable; process retained and paused.", options.retryDelayTicks, true);
+                    RealityProcessPausePolicy.SetProviderUnavailable(process,
+                        "Provider is unavailable; process retained and suspended.");
+                    world.RefreshProcessScheduleCache();
+                    world.Touch("process.paused", process.providerId, process.regionId, process.processId);
                     report.paused++;
                     continue;
                 }
@@ -76,8 +74,8 @@ namespace DeferredReality.Simulation
                     ? process.lastExecutionTick : process.nextDueTick;
                 long elapsed = Math.Max(0, now - fromTick);
                 int interval = Math.Max(1, process.intervalTicks);
-                int requestedSteps = elapsed <= 0 ? 1 : 1 + (int)Math.Min(int.MaxValue - 1L, elapsed / interval);
-                int boundedSteps = Math.Min(Math.Max(1, options.maximumAnalyticalSteps), Math.Max(1, requestedSteps));
+                int requestedSteps = RealityProcessScheduling.RequestedAnalyticalSteps(elapsed, interval);
+                int boundedSteps = RealityProcessScheduling.BoundedAnalyticalSteps(elapsed, interval, options.maximumAnalyticalSteps);
                 bool wasBounded = requestedSteps > boundedSteps;
                 var execution = new RealityProcessExecution
                 {
@@ -104,7 +102,10 @@ namespace DeferredReality.Simulation
                 if (!canExecute || vetoes.Count > 0)
                 {
                     string error = vetoes.Count > 0 ? string.Join("; ", vetoes.Select(item => item.ToString()).ToArray()) : "Provider vetoed execution.";
-                    Pause(process, world, error, options.retryDelayTicks, false);
+                    RealityProcessPausePolicy.SetProviderFailure(process, error,
+                        now + Math.Max(1, options.retryDelayTicks));
+                    world.RefreshProcessScheduleCache();
+                    world.Touch("process.paused", process.providerId, process.regionId, process.processId);
                     world.Quarantine("process", process.processId, process.providerId, error, process.payload);
                     report.paused++;
                     continue;
@@ -117,18 +118,32 @@ namespace DeferredReality.Simulation
                 }
                 if (!result.succeeded)
                 {
-                    Pause(process, world, result.error ?? "Provider execution failed.", options.retryDelayTicks, false);
-                    world.Quarantine("process", process.processId, process.providerId, result.error ?? "Provider execution failed.", process.payload);
+                    string error = result.error ?? "Provider execution failed.";
+                    RealityProcessPausePolicy.SetProviderFailure(process, error,
+                        now + Math.Max(1, options.retryDelayTicks));
+                    world.RefreshProcessScheduleCache();
+                    world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                    world.Quarantine("process", process.processId, process.providerId, error, process.payload);
                     report.failed++;
                     totalFailures++;
                     continue;
                 }
                 process.lastExecutionTick = now;
                 process.executionCount++;
-                process.lastError = null;
-                process.paused = result.pause;
-                process.cancelled = result.cancel;
-                process.nextDueTick = result.cancel ? long.MaxValue : now + Math.Max(1, result.nextDelayTicks >= 0 ? result.nextDelayTicks : interval);
+                long nextDueTick = now + Math.Max(1, result.nextDelayTicks >= 0 ? result.nextDelayTicks : interval);
+                if (result.cancel)
+                    RealityProcessPausePolicy.Cancel(process, now);
+                else if (result.pause)
+                    RealityProcessPausePolicy.SetProviderRequested(process, result.error, nextDueTick);
+                else
+                {
+                    process.paused = false;
+                    process.pauseReason = RealityProcessPauseReason.None;
+                    process.lastError = null;
+                    process.cancelled = false;
+                    process.nextDueTick = nextDueTick;
+                }
+                world.RefreshProcessScheduleCache();
                 world.Touch("process.executed", process.providerId, process.regionId, process.processId);
                 report.executed++;
                 report.elapsedTicks += elapsed;
@@ -140,12 +155,5 @@ namespace DeferredReality.Simulation
             return report;
         }
 
-        private static void Pause(RealityProcessRecord process, DeferredRealityWorldComponent world, string error, int retryDelay, bool pause)
-        {
-            process.lastError = error;
-            process.paused = pause;
-            process.nextDueTick = world.Now + Math.Max(1, retryDelay);
-            world.Touch("process.paused", process.providerId, process.regionId, process.processId);
-        }
     }
 }

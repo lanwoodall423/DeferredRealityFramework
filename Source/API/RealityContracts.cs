@@ -16,6 +16,12 @@ namespace DeferredReality.API
         public List<string> dependencies = new List<string>();
         public List<string> orderingBefore = new List<string>();
         public List<string> orderingAfter = new List<string>();
+        /// <summary>Retention window for explicitly safe exactly-once operation kinds; negative means durable forever.</summary>
+        public long operationRetentionTicks = -1;
+        /// <summary>Operation kinds that are safe to expire under operationRetentionTicks.</summary>
+        public List<string> compactableOperationKinds = new List<string>();
+        /// <summary>Optional opt-in window for cancelled process records; negative means retain until explicitly recovered.</summary>
+        public long cancelledProcessRetentionTicks = -1;
         public string displayName;
 
         /// <summary>Returns a detached, normalized metadata copy.</summary>
@@ -31,6 +37,9 @@ namespace DeferredReality.API
                 dependencies = new List<string>(dependencies ?? new List<string>()),
                 orderingBefore = new List<string>(orderingBefore ?? new List<string>()),
                 orderingAfter = new List<string>(orderingAfter ?? new List<string>()),
+                operationRetentionTicks = operationRetentionTicks,
+                compactableOperationKinds = new List<string>(compactableOperationKinds ?? new List<string>()),
+                cancelledProcessRetentionTicks = cancelledProcessRetentionTicks,
                 displayName = displayName
             };
         }
@@ -121,6 +130,43 @@ namespace DeferredReality.API
         void Rollback(RealityMaterializationContext context);
     }
 
+    /// <summary>Optional materialization extension that receives the stages that actually began.</summary>
+    public interface IStageAwareMaterializationProvider
+    {
+        void Rollback(RealityMaterializationContext context, RealityMaterializationStage stages);
+    }
+
+    /// <summary>Optional transactional anchor owner. Legacy anchor callbacks remain supported as final commit notifications.</summary>
+    public interface ITransactionalAnchorProvider
+    {
+        bool PrepareAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor, IList<RealityVeto> vetoes);
+        bool ApplyAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor, IList<RealityVeto> vetoes);
+        bool ValidateAnchorMaterialization(RealityMaterializationContext context, RealityAnchorRecord anchor, IList<RealityVeto> vetoes);
+        void RollbackAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor);
+    }
+
+    /// <summary>Optional cleanup hook after a transactional anchor reaches commit.</summary>
+    public interface ITransactionalAnchorCommitProvider
+    {
+        void CommitAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor);
+    }
+
+    /// <summary>Explicit provider-owned identity for a nonstandard map.</summary>
+    public sealed class RealityMapIdentityClaim
+    {
+        public string providerId;
+        public RealityRegionId regionId;
+        public string identityKey;
+
+        public string StableKey => (providerId ?? string.Empty) + "|" + regionId + "|" + (identityKey ?? string.Empty);
+    }
+
+    /// <summary>Optional provider hook used before a map can claim a region.</summary>
+    public interface IRealityMapIdentityProvider
+    {
+        bool TryClaimMap(Map map, out RealityMapIdentityClaim claim);
+    }
+
     /// <summary>Provider stage in the conservative compression pipeline.</summary>
     public interface ICompressionProvider
     {
@@ -129,6 +175,7 @@ namespace DeferredReality.API
         void Prepare(RealityCompressionRequest request);
         void Validate(RealityCompressionRequest request, IList<RealityVeto> vetoes);
         void Commit(RealityCompressionRequest request);
+        /// <summary>Compensates prepared state, including a committed compression when outer eviction fails.</summary>
         void Rollback(RealityCompressionRequest request);
     }
 
@@ -180,6 +227,37 @@ namespace DeferredReality.API
         public string entryEdge;
         public IReadOnlyList<Pawn> pawns = Array.Empty<Pawn>();
         public string transferId;
+        /// <summary>Optional durable excursion ticket attached to a committed outbound transfer.</summary>
+        public string excursionId;
+        /// <summary>Whether this transfer is the outbound leg that creates the ticket.</summary>
+        public bool isOutboundExcursion;
+    }
+
+    /// <summary>Typed metadata for a temporary adjacent map. It is never inferred from a reason string.</summary>
+    public sealed class RealityAdjacentMapMetadata
+    {
+        public string providerId;
+        public RealityRegionId originRegionId;
+        public int originMapUniqueId = -1;
+        public long createdTick = -1;
+    }
+
+    /// <summary>Public input for beginning a runtime excursion lease before its outbound transfer commits.</summary>
+    public sealed class RealityExcursionRequest
+    {
+        public string excursionId;
+        public string providerId;
+        public string pawnLoadId;
+        public RealityRegionId originRegionId;
+        public int originMapUniqueId = -1;
+        public RealityRegionId destinationRegionId;
+        public int destinationMapUniqueId = -1;
+        public IntVec3 originCell;
+        public string inverseReturnEdge;
+        public string outboundTransferId;
+        public string returnTransferId;
+        public long startTick;
+        public long graceDeadline;
     }
 
     /// <summary>Result of an adjacent transfer attempt, including safe world-travel fallback.</summary>
@@ -190,6 +268,7 @@ namespace DeferredReality.API
         public bool fallbackToWorldTravel;
         public string diagnostic;
         public IReadOnlyList<RealityVeto> vetoes = Array.Empty<RealityVeto>();
+        public IReadOnlyList<string> rollbackErrors = Array.Empty<string>();
     }
 
     /// <summary>Analytical execution window supplied to a process provider.</summary>
@@ -251,6 +330,8 @@ namespace DeferredReality.API
         public string reason;
         public bool preserveObservedFacts = true;
         public string entryEdge;
+        /// <summary>Optional explicit role metadata applied after a host map is generated.</summary>
+        public RealityAdjacentMapMetadata adjacentMap;
     }
 
     /// <summary>Side-effect-free materialization plan.</summary>
@@ -288,12 +369,13 @@ namespace DeferredReality.API
     public sealed class RealityMaterializationContext
     {
         internal RealityMaterializationContext(DeferredRealityWorldComponent world, RealityMaterializationRequest request,
-            RealityMaterializationPlan plan, Map map)
+            RealityMaterializationPlan plan, Map map, string transactionId)
         {
             World = world;
             Request = request;
             Plan = plan;
             Map = map;
+            TransactionId = transactionId ?? string.Empty;
         }
 
         /// <summary>Authoritative framework store.</summary>
@@ -307,6 +389,17 @@ namespace DeferredReality.API
 
         /// <summary>Host-created RimWorld map, if a host factory supplied one.</summary>
         public Map Map { get; }
+
+        /// <summary>Runtime-only identity for provider compensation state.</summary>
+        public string TransactionId { get; }
+
+        /// <summary>Runtime-only provider compensation data; never persisted.</summary>
+        public IDictionary<string, object> RuntimeState { get; } = new Dictionary<string, object>();
+
+        /// <summary>Stages that began; providers must not compensate stages outside this mask.</summary>
+        public RealityMaterializationStage Stages { get; internal set; }
+
+        internal void MarkStage(RealityMaterializationStage stage) { Stages |= stage; }
     }
 
     /// <summary>Compression request. Generic compression is intentionally unsupported by default.</summary>
@@ -314,6 +407,8 @@ namespace DeferredReality.API
     {
         public Map Map;
         public RealityRegionId regionId;
+        /// <summary>Explicit compression owner; when omitted the region provider namespace is used.</summary>
+        public string providerId;
         public long now;
         public string reason;
         public bool dryRun = true;
@@ -345,6 +440,10 @@ namespace DeferredReality.API
         public bool succeeded;
         public bool rolledBack;
         public string error;
+        /// <summary>Original transition failure, retained separately from compensation diagnostics.</summary>
+        public string originalError;
+        /// <summary>Provider/map compensation failures are never discarded.</summary>
+        public IReadOnlyList<string> rollbackErrors = Array.Empty<string>();
         public RealityRegionId regionId;
         public IReadOnlyList<RealityVeto> vetoes = Array.Empty<RealityVeto>();
         public IReadOnlyList<string> steps = Array.Empty<string>();

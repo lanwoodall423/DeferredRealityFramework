@@ -19,11 +19,17 @@ namespace DeferredReality.API
         public static bool Register(IRealityProvider provider)
         {
             if (provider?.Registration == null || string.IsNullOrWhiteSpace(provider.Registration.providerId)) return false;
+            if (!RealityThreadGuard.IsMainThread)
+            {
+                LongEventHandler.ExecuteWhenFinished(() => Register(provider));
+                return true;
+            }
             RealityProviderRegistration registration = provider.Registration;
             registration.providerId = registration.providerId.Trim();
             registration.dependencies = Normalize(registration.dependencies);
             registration.orderingBefore = Normalize(registration.orderingBefore);
             registration.orderingAfter = Normalize(registration.orderingAfter);
+            registration.compactableOperationKinds = Normalize(registration.compactableOperationKinds);
             ProvidersById[registration.providerId] = provider;
             revision++;
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
@@ -35,6 +41,18 @@ namespace DeferredReality.API
         public static bool TryGet(string providerId, out IRealityProvider provider)
         {
             return ProvidersById.TryGetValue(providerId ?? string.Empty, out provider);
+        }
+
+        /// <summary>Returns detached provider metadata for safe retention decisions.</summary>
+        public static bool TryGetRegistration(string providerId, out RealityProviderRegistration registration)
+        {
+            if (ProvidersById.TryGetValue(providerId ?? string.Empty, out IRealityProvider provider) && provider?.Registration != null)
+            {
+                registration = provider.Registration.Clone();
+                return true;
+            }
+            registration = null;
+            return false;
         }
 
         /// <summary>Returns detached registration metadata in deterministic order.</summary>
@@ -61,6 +79,7 @@ namespace DeferredReality.API
             try
             {
                 provider.OnRegistered(new RealityProviderContext(world, provider.Registration.providerId, world.Now));
+                world.ReactivateProviderProcesses(provider.Registration.providerId);
                 if (provider is IRegionDescriptorProvider descriptorProvider)
                 {
                     foreach (RealityRegionDescriptor descriptor in descriptorProvider.DescribeRegions(

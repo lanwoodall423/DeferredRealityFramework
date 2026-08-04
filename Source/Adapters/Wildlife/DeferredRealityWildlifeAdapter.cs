@@ -16,7 +16,8 @@ namespace DeferredReality.Wildlife
 {
     /// <summary>Wildlife adapter. Regional truth is imported into framework populations; active AI remains Wildlife-owned.</summary>
     public sealed partial class WildlifeRealityProvider : IRealityProvider, IRealityProcessProvider, IPopulationProvider,
-        IAnchorProvider, IConstraintResolver, IMaterializationProvider, IAdjacentRegionTransferHost, IRealityDiagnosticsProvider
+        IAnchorProvider, ITransactionalAnchorProvider, ITransactionalAnchorCommitProvider, IRealityMapIdentityProvider, IConstraintResolver,
+        IMaterializationProvider, IAdjacentRegionTransferHost, ICompressionProvider, IRealityDiagnosticsProvider
     {
         public const string ProviderId = "lan.wildlife";
         private DeferredRealityWorldComponent attachedWorld;
@@ -31,7 +32,11 @@ namespace DeferredReality.Wildlife
             order = 100,
             capabilities = RealityProviderCapability.Populations | RealityProviderCapability.Processes |
                 RealityProviderCapability.Anchors | RealityProviderCapability.Constraints |
-                RealityProviderCapability.Materialization | RealityProviderCapability.Diagnostics
+                RealityProviderCapability.Materialization | RealityProviderCapability.Compression |
+                RealityProviderCapability.Diagnostics,
+            // These event IDs include stable source identity and cannot legitimately replay after this window.
+            operationRetentionTicks = 3600000L,
+            compactableOperationKinds = new List<string> { "consume", "release", "active-map-reconcile" }
         };
 
         public void OnRegistered(RealityProviderContext context)

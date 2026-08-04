@@ -52,11 +52,19 @@ namespace DeferredReality.Simulation
             RealityThreadGuard.RequireMainThread();
             RealityProcessRecord record = world?.ProcessRecord(processId);
             if (record == null) return false;
-            record.paused = paused;
-            record.cancelled = cancelled;
-            record.lastError = null;
-            if (!cancelled) record.nextDueTick = world.Now + Math.Max(1, record.intervalTicks);
-            world.Touch(paused ? "process.paused" : "process.resumed", record.providerId, record.regionId, record.processId);
+            if (cancelled)
+            {
+                if (!RealityProcessPausePolicy.Cancel(record, world.Now)) return false;
+            }
+            else if (paused)
+            {
+                RealityProcessPausePolicy.SetManual(record);
+                record.nextDueTick = world.Now + Math.Max(1, record.intervalTicks);
+            }
+            else if (!RealityProcessPausePolicy.Resume(record, world.Now + Math.Max(1, record.intervalTicks))) return false;
+            world.RefreshProcessScheduleCache();
+            world.Touch(cancelled ? "process.cancelled" : paused ? "process.paused" : "process.resumed",
+                record.providerId, record.regionId, record.processId);
             return true;
         }
     }

@@ -29,6 +29,18 @@ pawn into aggregate storage. Anchors retain the existing RimWorld load ID and
 provider provenance; restoration is a provider responsibility and is not claimed
 safe for generic pawns.
 
+Wildlife trail excursions are the explicit exception for a provider-owned live
+Pawn transfer. The adapter marks generated adjacent maps with typed metadata and
+its `WildlifeDeferredMapParent.regionId` identity, then creates a durable framework
+excursion ticket only after the transfer host commits the exact tracker Pawn on the
+destination map. The ticket retains the origin map/cell, inverse edge, outbound and
+return IDs, heartbeat/lease state, and diagnostics. Trail integrations should use
+the world lease API rather than assuming Herds exposes a completion callback; the
+framework returns the tracker only when the task is explicitly completed or a
+conservative idle lease expires. Missing origins, provider removal, interrupted
+transfers, duplicate ownership, and unsafe jobs retain the adjacent map and Pawn
+for retry rather than falling back to a different map or reconstructing the Pawn.
+
 ## Legacy conversion
 
 Migration consumers are `regional:<RealityRegionId>`, version `1`, with checksum

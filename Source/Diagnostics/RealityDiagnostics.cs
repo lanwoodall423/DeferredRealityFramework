@@ -27,10 +27,14 @@ namespace DeferredReality.Diagnostics
         public readonly int conflicts;
         public readonly int quarantine;
         public readonly int providers;
+        public readonly int adjacentMaps;
+        public readonly int excursions;
+        public readonly IReadOnlyList<string> adjacentLines;
         public readonly long totalProcessExecutions;
         public readonly long totalProcessFailures;
         public readonly long boundedCatchups;
         public readonly IReadOnlyList<RealityRegionSnapshot> regionRows;
+        public readonly IReadOnlyList<RealityProcessSnapshot> processRows;
         public readonly IReadOnlyList<string> providerLines;
 
         internal RealityDiagnosticsSnapshot(DeferredRealityWorldComponent world)
@@ -42,11 +46,15 @@ namespace DeferredReality.Diagnostics
             populations = world?.PopulationSnapshots().Count ?? 0;
             anchors = world?.AnchorSnapshots().Count ?? 0;
             constraints = world?.ConstraintSnapshots().Count ?? 0;
-            processes = world?.ProcessSnapshots().Count ?? 0;
+            processRows = world?.ProcessSnapshots() ?? Array.Empty<RealityProcessSnapshot>();
+            processes = processRows.Count;
             observations = world?.ObservationSnapshots().Count ?? 0;
             conflicts = world?.ConflictSnapshots().Count ?? 0;
             quarantine = world?.QuarantineSnapshots().Count ?? 0;
             providers = RealityProviderRegistry.Registrations().Count;
+            adjacentLines = world == null ? Array.Empty<string>() : RealityAdjacentSurfaceService.AdjacentDiagnostics(world);
+            adjacentMaps = world?.AdjacentMapSnapshots().Count ?? 0;
+            excursions = world?.ExcursionSnapshots().Count ?? 0;
             totalProcessExecutions = RealityProcessScheduler.TotalExecutions;
             totalProcessFailures = RealityProcessScheduler.TotalFailures;
             boundedCatchups = RealityProcessScheduler.TotalBoundedCatchups;
@@ -96,13 +104,22 @@ namespace DeferredReality.Diagnostics
                 .Append(" regions=").Append(summary.regions).Append(" populations=").Append(summary.populations)
                 .Append(" anchors=").Append(summary.anchors).Append(" constraints=").Append(summary.constraints)
                 .Append(" processes=").Append(summary.processes).Append(" observations=").Append(summary.observations)
-                .Append(" conflicts=").Append(summary.conflicts).Append(" quarantine=").Append(summary.quarantine).AppendLine();
+                .Append(" conflicts=").Append(summary.conflicts).Append(" quarantine=").Append(summary.quarantine)
+                .Append(" adjacentMaps=").Append(summary.adjacentMaps).Append(" excursions=").Append(summary.excursions).AppendLine();
             foreach (RealityRegionSnapshot region in summary.regionRows)
                 builder.Append(region.id).Append('|').Append(region.fidelity).Append('|').Append(region.observationLevel).AppendLine();
             foreach (RealityPopulationSnapshot population in world.PopulationSnapshots())
                 builder.Append("population|").Append(population.record.populationId).Append('|')
                     .Append(population.record.amount.ToString("R", CultureInfo.InvariantCulture))
                     .Append('|').Append(population.record.uncertainty.ToString("R", CultureInfo.InvariantCulture)).AppendLine();
+            foreach (RealityProcessSnapshot process in summary.processRows)
+            {
+                builder.Append("process|").Append(process.record.processId).Append('|').Append(process.record.providerId)
+                    .Append('|').Append(process.record.paused).Append('|').Append(process.record.pauseReason)
+                    .Append('|').Append(process.record.nextDueTick).Append('|').Append(process.record.executionCount)
+                    .Append('|').Append(process.record.lastError ?? string.Empty).AppendLine();
+            }
+            foreach (string line in summary.adjacentLines) builder.Append(line).AppendLine();
             return builder.ToString();
         }
     }
@@ -138,9 +155,26 @@ namespace DeferredReality.Diagnostics
             foreach (RealityAnchorSnapshot anchor in world.AnchorSnapshots())
                 if (!regionIds.Contains(anchor.record.regionId)) report.errors.Add("orphan-anchor=" + anchor.record.anchorId);
             foreach (RealityProcessSnapshot process in world.ProcessSnapshots())
+            {
                 if (!RealityProviderRegistry.TryGet(process.record.providerId, out _)) report.warnings.Add("missing-process-provider=" + process.record.providerId);
+                if (process.record.paused) report.warnings.Add("paused-process=" + process.record.processId + ":" + process.record.pauseReason);
+            }
             foreach (RealityConflictReport conflict in world.ConflictSnapshots()) report.warnings.Add("unresolved-conflict=" + conflict.conflictId);
             foreach (RealityQuarantineRecord record in world.QuarantineSnapshots()) report.warnings.Add("quarantine=" + record.recordType + "/" + record.recordId);
+            foreach (RealityAdjacentMapRecord marker in world.AdjacentMapSnapshots())
+            {
+                if (!RealityProviderRegistry.TryGet(marker.providerId, out _))
+                    report.warnings.Add("missing-adjacent-provider=" + marker.providerId + "/" + marker.mapUniqueId);
+                if (!RealityRegionId.TryParse(marker.regionId, out _))
+                    report.errors.Add("invalid-adjacent-region=" + marker.mapUniqueId);
+            }
+            foreach (RealityExcursionTicket ticket in world.ExcursionSnapshots())
+            {
+                if (!RealityProviderRegistry.TryGet(ticket.providerId, out _))
+                    report.warnings.Add("missing-excursion-provider=" + ticket.excursionId);
+                if (ticket.status != RealityExcursionStatus.Completed && ticket.originMapUniqueId < 0)
+                    report.errors.Add("invalid-excursion-origin=" + ticket.excursionId);
+            }
             return report;
         }
     }
@@ -162,7 +196,7 @@ namespace DeferredReality.Diagnostics
                 return;
             }
             Widgets.Label(new Rect(rect.x, rect.y, rect.width, 24f), "Deferred Reality Framework");
-            Rect view = new Rect(0f, 0f, rect.width - 24f, 1800f);
+            Rect view = new Rect(0f, 0f, rect.width - 24f, 2400f);
             Widgets.BeginScrollView(new Rect(rect.x, rect.y + 30f, rect.width, rect.height - 30f), ref scrollPosition, view);
             float y = 0f;
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Revision " + summary.revision + " | Tick " + summary.tick +
@@ -171,10 +205,22 @@ namespace DeferredReality.Diagnostics
                 " | Observations " + summary.observations + " | Conflicts " + summary.conflicts + " | Quarantine " + summary.quarantine); y += 30f;
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Providers " + summary.providers + " | Process runs " + summary.totalProcessExecutions +
                 " | Failures " + summary.totalProcessFailures + " | Bounded catch-ups " + summary.boundedCatchups); y += 30f;
+            Widgets.Label(new Rect(0f, y, view.width, 22f), "Adjacent maps " + summary.adjacentMaps + " | Excursions " + summary.excursions +
+                " | Construction: " + RealityAdjacentConstructionGuards.RejectionMessage); y += 24f;
             foreach (RealityRegionSnapshot region in world.RegionSnapshots())
             {
                 Widgets.Label(new Rect(0f, y, view.width, 22f), region.id + " | " + region.fidelity + " | observed " + region.observationLevel +
                     " | map " + region.activeMapUniqueId); y += 22f;
+            }
+            foreach (RealityProcessSnapshot process in summary.processRows)
+            {
+                Widgets.Label(new Rect(0f, y, view.width, 22f), "process " + process.record.processId + " | " +
+                    process.record.providerId + " | " + (process.record.paused ? process.record.pauseReason.ToString() : "Runnable") +
+                    " | due " + process.record.nextDueTick + " | runs " + process.record.executionCount); y += 22f;
+            }
+            foreach (string line in summary.adjacentLines)
+            {
+                Widgets.Label(new Rect(0f, y, view.width, 22f), line); y += 22f;
             }
             foreach (string line in summary.providerLines)
             {
@@ -224,6 +270,32 @@ namespace DeferredReality.Diagnostics
             var request = new RealityCompressionRequest { Map = map, now = Find.TickManager.TicksGame, dryRun = true };
             IReadOnlyList<RealityVeto> vetoes = RealityCompressionService.CanCompress(DeferredRealityWorldComponent.Current, request);
             Log.Message("[DeferredReality][Compression] " + string.Join("; ", vetoes.Select(item => item.ToString()).ToArray()));
+        }
+
+        [DebugAction(Category, "Dump adjacent excursion diagnostics", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void DumpAdjacentDiagnostics()
+        {
+            Log.Message("[DeferredReality][Adjacent]\n" + string.Join("\n",
+                RealityAdjacentSurfaceService.AdjacentDiagnostics(DeferredRealityWorldComponent.Current).ToArray()));
+        }
+
+        [DebugAction(Category, "Monitor adjacent excursion safety now", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void MonitorAdjacent()
+        {
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            if (world == null) return;
+            RealityAdjacentSurfaceService.Monitor(world, world.Now);
+            Messages.Message("Adjacent excursion safety monitor ran; inspect the diagnostics dump for blockers.",
+                MessageTypeDefOf.NeutralEvent, false);
+        }
+
+        [DebugAction(Category, "Attempt adjacent warm-map eviction", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void EvictAdjacent()
+        {
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            if (world == null) return;
+            Log.Message("[DeferredReality][Adjacent eviction]\n" + string.Join("\n",
+                RealityAdjacentSurfaceService.TryEvictWarmMaps(world, world.Now).ToArray()));
         }
 
         private static void Simulate(int ticks)

@@ -25,6 +25,30 @@ namespace DeferredReality.Wildlife
             public bool moved;
         }
 
+        private sealed class PreparedAnchorMaterialization
+        {
+            public Pawn pawn;
+            public Map map;
+            public IntVec3 originalCell;
+            public bool wasInWorldPawns;
+            public bool spawned;
+        }
+
+        private sealed class MaterializationMapState
+        {
+            public readonly List<WildlifeSpeciesState> species = new List<WildlifeSpeciesState>();
+        }
+
+        private sealed class WildlifeSpeciesState
+        {
+            public RegionalSpeciesRecord record;
+            public float population;
+            public float previousPopulation;
+            public float nearbyPopulation;
+            public float previousNearbyPopulation;
+            public int lastUpdateTick;
+        }
+
         internal sealed class WildlifeAnimalDeparture
         {
             internal Map sourceMap;
@@ -37,6 +61,8 @@ namespace DeferredReality.Wildlife
 
         private readonly Dictionary<string, List<PreparedTransfer>> preparedTransfers =
             new Dictionary<string, List<PreparedTransfer>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<PreparedAnchorMaterialization>> preparedAnchorMaterializations =
+            new Dictionary<string, List<PreparedAnchorMaterialization>>(StringComparer.Ordinal);
 
         private static readonly HashSet<string> MaterializingRegions =
             new HashSet<string>(StringComparer.Ordinal);
@@ -91,10 +117,10 @@ namespace DeferredReality.Wildlife
         {
             if (context?.World == null || context.Map == null) return;
             RealityRegionId region = context.Request.regionId;
+            context.RuntimeState["wildlife.materialization-map"] = CaptureMaterializationMapState(context.Map);
             context.World.RegisterMap(context.Map, region);
             MaterializingRegions.Remove(region.ToString());
             MigrateMap(context.Map, context.World);
-            MaterializeTargetAnchor(context);
             SyncMap(context.Map);
             EnsureAdjacentTopology(context.World, region);
             context.Plan.AddStep("wildlife-apply-active-projection");
@@ -120,6 +146,143 @@ namespace DeferredReality.Wildlife
         public void Rollback(RealityMaterializationContext context)
         {
             if (context?.Request != null) MaterializingRegions.Remove(context.Request.regionId.ToString());
+            if (context != null && context.RuntimeState.TryGetValue("wildlife.materialization-map", out object value) &&
+                value is MaterializationMapState state)
+            {
+                RestoreMaterializationMapState(state);
+                context.RuntimeState.Remove("wildlife.materialization-map");
+            }
+        }
+
+        private static MaterializationMapState CaptureMaterializationMapState(Map map)
+        {
+            var state = new MaterializationMapState();
+            RegionalWildlifeMapComponent legacy = map?.GetComponent<RegionalWildlifeMapComponent>();
+            foreach (RegionalSpeciesRecord record in legacy?.Records ?? Enumerable.Empty<RegionalSpeciesRecord>())
+            {
+                if (record == null) continue;
+                state.species.Add(new WildlifeSpeciesState
+                {
+                    record = record,
+                    population = record.population,
+                    previousPopulation = record.previousPopulation,
+                    nearbyPopulation = record.nearbyPopulation,
+                    previousNearbyPopulation = record.previousNearbyPopulation,
+                    lastUpdateTick = record.lastUpdateTick
+                });
+            }
+            return state;
+        }
+
+        private static void RestoreMaterializationMapState(MaterializationMapState state)
+        {
+            foreach (WildlifeSpeciesState value in state?.species ?? Enumerable.Empty<WildlifeSpeciesState>())
+            {
+                if (value?.record == null) continue;
+                value.record.population = value.population;
+                value.record.previousPopulation = value.previousPopulation;
+                value.record.nearbyPopulation = value.nearbyPopulation;
+                value.record.previousNearbyPopulation = value.previousNearbyPopulation;
+                value.record.lastUpdateTick = value.lastUpdateTick;
+            }
+        }
+
+        public bool PrepareAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor, IList<RealityVeto> vetoes)
+        {
+            if (anchor == null || anchor.providerId != ProviderId) return true;
+            if (context?.Map == null)
+            {
+                vetoes.Add(new RealityVeto("wildlife.anchor-map", "Wildlife anchor materialization requires an active map.", ProviderId));
+                return false;
+            }
+            return true;
+        }
+
+        public bool ApplyAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor, IList<RealityVeto> vetoes)
+        {
+            if (anchor == null || anchor.providerId != ProviderId || context?.Map == null) return true;
+            if (!string.IsNullOrEmpty(context.Request.targetAnchorId) && anchor.anchorId != context.Request.targetAnchorId) return true;
+            if (string.IsNullOrEmpty(anchor.optionalRimWorldLoadId)) return true;
+            Pawn pawn = Find.WorldPawns?.AllPawnsAlive?.FirstOrDefault(candidate =>
+                candidate?.GetUniqueLoadID() == anchor.optionalRimWorldLoadId);
+            if (pawn == null || pawn.Dead) return true;
+            if (pawn.Spawned && pawn.Map != context.Map)
+            {
+                vetoes.Add(new RealityVeto("wildlife.anchor-spawned", "The Wildlife anchor pawn is already spawned on another map.", ProviderId, 3));
+                return false;
+            }
+            if (pawn.Spawned) return true;
+            IntVec3 entry = FindEntryCell(context.Map, context.Request.entryEdge, 0);
+            if (!entry.IsValid)
+            {
+                vetoes.Add(new RealityVeto("wildlife.anchor-entry", "No valid entry cell exists for the Wildlife anchor.", ProviderId, 3));
+                return false;
+            }
+            var state = new PreparedAnchorMaterialization
+            {
+                pawn = pawn,
+                map = context.Map,
+                originalCell = pawn.Position,
+                wasInWorldPawns = Find.WorldPawns.Contains(pawn)
+            };
+            if (!preparedAnchorMaterializations.TryGetValue(context.TransactionId, out List<PreparedAnchorMaterialization> states))
+                preparedAnchorMaterializations[context.TransactionId] = states = new List<PreparedAnchorMaterialization>();
+            // Register compensation before the first irreversible operation.
+            states.Add(state);
+            try
+            {
+                if (state.wasInWorldPawns) Find.WorldPawns.RemovePawn(pawn);
+                GenSpawn.Spawn(pawn, entry, context.Map, Rot4.Random);
+                state.spawned = true;
+                anchor.lifecycle = RealityAnchorLifecycle.Present;
+                anchor.lastKnownTick = context.Request.now;
+                anchor.lastKnownLocation = new RealityLocation
+                {
+                    x = entry.x, z = entry.z, edge = context.Request.entryEdge,
+                    precision = RealityObservationPrecision.Cell
+                };
+                context.World.UpsertAnchor(anchor);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                // Spawn can throw after changing Pawn state; make that partial mutation visible to compensation.
+                state.spawned = pawn.Spawned && pawn.Map == context.Map;
+                vetoes.Add(new RealityVeto("wildlife.anchor-apply", exception.Message, ProviderId, 3));
+                return false;
+            }
+        }
+
+        public bool ValidateAnchorMaterialization(RealityMaterializationContext context, RealityAnchorRecord anchor, IList<RealityVeto> vetoes)
+        {
+            if (anchor == null || anchor.providerId != ProviderId || context?.World == null) return true;
+            RealityAnchorSnapshot snapshot = context.World.AnchorSnapshots(context.Request.regionId.ToString(), ProviderId)
+                .FirstOrDefault(item => item.record.anchorId == anchor.anchorId);
+            if (snapshot == null || !string.IsNullOrEmpty(anchor.optionalRimWorldLoadId) && snapshot.record.lifecycle != RealityAnchorLifecycle.Present)
+            {
+                vetoes.Add(new RealityVeto("wildlife.anchor-validation", "The Wildlife anchor was not materialized consistently.", ProviderId, 3));
+                return false;
+            }
+            return true;
+        }
+
+        public void RollbackAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor)
+        {
+            if (context == null || !preparedAnchorMaterializations.TryGetValue(context.TransactionId, out List<PreparedAnchorMaterialization> states)) return;
+            for (int i = states.Count - 1; i >= 0; i--)
+            {
+                PreparedAnchorMaterialization state = states[i];
+                if (state.pawn == null) continue;
+                if (state.spawned && state.pawn.Spawned) state.pawn.DeSpawn(DestroyMode.Vanish);
+                if (state.wasInWorldPawns && !Find.WorldPawns.Contains(state.pawn))
+                    Find.WorldPawns.PassToWorld(state.pawn, PawnDiscardDecideMode.KeepForever);
+            }
+            preparedAnchorMaterializations.Remove(context.TransactionId);
+        }
+
+        public void CommitAnchor(RealityMaterializationContext context, RealityAnchorRecord anchor)
+        {
+            if (context != null) preparedAnchorMaterializations.Remove(context.TransactionId);
         }
 
         public bool CanTransfer(RealityAdjacentTransferRequest request, IList<RealityVeto> vetoes)
@@ -268,7 +431,14 @@ namespace DeferredReality.Wildlife
                     targetAnchorId = lead.targetAnimal == null ? null : "wildlife:animal:" + lead.targetAnimal.thingIDNumber,
                     now = attachedWorld.Now,
                     reason = "follow-wildlife-trail",
-                    entryEdge = lead.direction
+                    entryEdge = lead.direction,
+                    adjacentMap = new RealityAdjacentMapMetadata
+                    {
+                        providerId = ProviderId,
+                        originRegionId = source,
+                        originMapUniqueId = sourceMap.uniqueID,
+                        createdTick = attachedWorld.Now
+                    }
                 });
             if (!materialization.succeeded)
             {
@@ -284,6 +454,38 @@ namespace DeferredReality.Wildlife
                 OpenWorldTravelFallback(sourceMap);
                 return false;
             }
+            string pawnLoadId = lead.tracker.GetUniqueLoadID();
+            string outboundTransferId = "wildlife:trail:outbound:" + RealityDeterminism.Combine(
+                source.ToString(), destination.ToString(), pawnLoadId, lead.createdTick.ToString(CultureInfo.InvariantCulture));
+            if (!attachedWorld.BeginExcursion(new RealityExcursionRequest
+            {
+                providerId = ProviderId,
+                pawnLoadId = pawnLoadId,
+                originRegionId = source,
+                originMapUniqueId = sourceMap.uniqueID,
+                destinationRegionId = destination,
+                destinationMapUniqueId = destinationMap.uniqueID,
+                originCell = lead.departureCell.IsValid ? lead.departureCell : lead.tracker.Position,
+                inverseReturnEdge = RealityAdjacentPolicy.InverseEdge(lead.direction),
+                outboundTransferId = outboundTransferId,
+                returnTransferId = "wildlife:trail:return:" + RealityDeterminism.Combine(source.ToString(), destination.ToString(), pawnLoadId),
+                startTick = attachedWorld.Now,
+                graceDeadline = attachedWorld.Now + RealityAdjacentPolicy.DefaultGraceTicks
+            }, out string excursionId, out string excursionDiagnostic))
+            {
+                Messages.Message("The Wildlife excursion could not be leased safely: " + excursionDiagnostic,
+                    MessageTypeDefOf.RejectInput, false);
+                OpenWorldTravelFallback(sourceMap);
+                return false;
+            }
+            if (!attachedWorld.AttachExcursion(excursionId, lead.tracker, out string attachDiagnostic))
+            {
+                attachedWorld.CancelPendingExcursion(excursionId);
+                Messages.Message("The Wildlife excursion could not bind the exact tracker Pawn: " + attachDiagnostic,
+                    MessageTypeDefOf.RejectInput, false);
+                OpenWorldTravelFallback(sourceMap);
+                return false;
+            }
             RealityAdjacentTransferResult transfer = RealityAdjacentSurfaceService.TryTransfer(new RealityAdjacentTransferRequest
             {
                 providerId = ProviderId,
@@ -291,10 +493,14 @@ namespace DeferredReality.Wildlife
                 destinationMap = destinationMap,
                 sourceCell = lead.departureCell.IsValid ? lead.departureCell : lead.tracker.Position,
                 entryEdge = lead.direction,
-                pawns = new[] { lead.tracker }
+                pawns = new[] { lead.tracker },
+                transferId = outboundTransferId,
+                excursionId = excursionId,
+                isOutboundExcursion = true
             });
             if (!transfer.succeeded)
             {
+                attachedWorld.CancelPendingExcursion(excursionId);
                 Messages.Message("The trail region was materialized, but the tracker could not cross safely. " +
                     (transfer.diagnostic ?? "Ordinary world travel remains available."), MessageTypeDefOf.RejectInput, false);
                 OpenWorldTravelFallback(sourceMap);
@@ -486,24 +692,13 @@ namespace DeferredReality.Wildlife
             }
         }
 
-        private void MaterializeTargetAnchor(RealityMaterializationContext context)
+        public bool TryClaimMap(Map map, out RealityMapIdentityClaim claim)
         {
-            if (context?.World == null || context.Map == null || string.IsNullOrEmpty(context.Request.targetAnchorId)) return;
-            RealityAnchorSnapshot snapshot = context.World.AnchorSnapshots(context.Request.regionId.ToString(), ProviderId)
-                .FirstOrDefault(item => item.record.anchorId == context.Request.targetAnchorId);
-            if (snapshot == null || string.IsNullOrEmpty(snapshot.record.optionalRimWorldLoadId)) return;
-            Pawn pawn = Find.WorldPawns?.AllPawnsAlive?.FirstOrDefault(candidate =>
-                candidate?.GetUniqueLoadID() == snapshot.record.optionalRimWorldLoadId);
-            if (pawn == null || pawn.Dead) return;
-            IntVec3 entry = FindEntryCell(context.Map, context.Request.entryEdge, 0);
-            if (!entry.IsValid) return;
-            if (Find.WorldPawns.Contains(pawn)) Find.WorldPawns.RemovePawn(pawn);
-            GenSpawn.Spawn(pawn, entry, context.Map, Rot4.Random);
-            RealityAnchorRecord anchor = snapshot.record;
-            anchor.lifecycle = RealityAnchorLifecycle.Present;
-            anchor.lastKnownTick = context.Request.now;
-            anchor.lastKnownLocation = new RealityLocation { x = entry.x, z = entry.z, edge = context.Request.entryEdge, precision = RealityObservationPrecision.Cell };
-            context.World.UpsertAnchor(anchor);
+            claim = null;
+            WildlifeDeferredMapParent parent = map?.Parent as WildlifeDeferredMapParent;
+            if (parent == null || string.IsNullOrEmpty(parent.regionId) || !RealityRegionId.TryParse(parent.regionId, out RealityRegionId region)) return false;
+            claim = new RealityMapIdentityClaim { providerId = ProviderId, regionId = region, identityKey = parent.regionId };
+            return true;
         }
 
         internal RealityPopulationMutationResult ApplyAggregateImpact(Map map, ThingDef species, float delta,
@@ -647,9 +842,26 @@ namespace DeferredReality.Wildlife
 
         private static IntVec3 FindEntryCell(Map map, string edge, int offset)
         {
-            IntVec3 cell = map == null ? IntVec3.Invalid : CellFinder.RandomEdgeCell(map);
             if (map == null) return IntVec3.Invalid;
-            if (cell.Standable(map)) return cell;
+            string normalized = (edge ?? string.Empty).Trim().ToLowerInvariant();
+            int width = Math.Max(1, map.Size.x);
+            int height = Math.Max(1, map.Size.z);
+            int attempts = normalized == "east" || normalized == "west" ? height : width;
+            int start = Math.Max(0, offset) % Math.Max(1, attempts);
+            for (int i = 0; i < attempts; i++)
+            {
+                int position = (start + i) % attempts;
+                IntVec3 cell;
+                switch (normalized)
+                {
+                    case "north": cell = new IntVec3(position, 0, height - 1); break;
+                    case "south": cell = new IntVec3(position, 0, 0); break;
+                    case "east": cell = new IntVec3(width - 1, 0, position); break;
+                    case "west": cell = new IntVec3(0, 0, position); break;
+                    default: cell = CellFinder.RandomEdgeCell(map); break;
+                }
+                if (cell.InBounds(map) && cell.Standable(map)) return cell;
+            }
             IntVec3 fallback = CellFinder.RandomClosewalkCellNear(map.Center, map, 20);
             return fallback.IsValid && fallback.Standable(map) ? fallback : map.Center;
         }
@@ -681,6 +893,24 @@ namespace DeferredReality.Wildlife
             return (payload ?? string.Empty).Split(';')
                 .FirstOrDefault(item => item.StartsWith(prefix, StringComparison.Ordinal))?.Substring(prefix.Length);
         }
+
+        public void CanCompress(RealityCompressionRequest request, IList<RealityVeto> vetoes)
+        {
+            if (request == null || request.Map == null || request.regionId.ProviderNamespace != ProviderId ||
+                !(request.Map.Parent is WildlifeDeferredMapParent parent) ||
+                !string.Equals(parent.regionId, request.regionId.ToString(), StringComparison.Ordinal))
+            {
+                vetoes.Add(new RealityVeto("wildlife.compression-owner", "The map is not an owned Wildlife adjacent region.",
+                    ProviderId, 3));
+            }
+        }
+
+        // Wildlife state is already represented by the framework's persisted regional records. These
+        // no-op stages are an explicit safe-compression policy before the factory removes the map.
+        public void Prepare(RealityCompressionRequest request) { }
+        public void Validate(RealityCompressionRequest request, IList<RealityVeto> vetoes) { }
+        public void Commit(RealityCompressionRequest request) { }
+        public void Rollback(RealityCompressionRequest request) { }
 
         internal static string ProviderPopulationIdForRegion(RealityRegionId regionId, string species) =>
             ProviderPopulationId(regionId, species);
@@ -784,8 +1014,8 @@ namespace DeferredReality.Wildlife
 
         public void RemoveMap(Map map)
         {
-            MapParent parent = map?.Parent;
-            if (parent != null && !parent.Destroyed) parent.Destroy();
+            WildlifeDeferredMapParent parent = map?.Parent as WildlifeDeferredMapParent;
+            if (parent != null && !parent.Destroyed && RealityRegionId.TryParse(parent.regionId, out _)) parent.Destroy();
         }
     }
 }

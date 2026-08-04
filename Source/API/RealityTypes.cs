@@ -63,6 +63,16 @@ namespace DeferredReality.API
         ProviderDefined
     }
 
+    /// <summary>Why a scheduled process is paused or suspended.</summary>
+    public enum RealityProcessPauseReason
+    {
+        None,
+        Manual,
+        ProviderFailure,
+        ProviderUnavailable,
+        ProviderRequested
+    }
+
     /// <summary>Policy used when two established constraints cannot both be applied.</summary>
     public enum RealityConflictPolicy
     {
@@ -105,6 +115,27 @@ namespace DeferredReality.API
         Fallback
     }
 
+    /// <summary>Lifecycle of a map explicitly marked as a temporary adjacent site.</summary>
+    public enum RealityAdjacentMapLifecycle
+    {
+        Materializing,
+        Active,
+        Evicting,
+        Retired,
+        Quarantined
+    }
+
+    /// <summary>Durable lifecycle of a bounded excursion ticket.</summary>
+    public enum RealityExcursionStatus
+    {
+        Active,
+        ReturnRequested,
+        Returning,
+        Completed,
+        Cancelled,
+        Quarantined
+    }
+
     /// <summary>Capabilities advertised by a provider.</summary>
     [Flags]
     public enum RealityProviderCapability
@@ -119,6 +150,23 @@ namespace DeferredReality.API
         Compression = 1 << 6,
         Observations = 1 << 7,
         Diagnostics = 1 << 8
+    }
+
+    /// <summary>Stages that may have begun during a materialization transaction.</summary>
+    [Flags]
+    public enum RealityMaterializationStage
+    {
+        None = 0,
+        Preparation = 1 << 0,
+        MapAcquisition = 1 << 1,
+        ProviderApply = 1 << 2,
+        ConstraintResolution = 1 << 3,
+        AnchorPreparation = 1 << 4,
+        AnchorApply = 1 << 5,
+        AnchorValidation = 1 << 6,
+        ProviderValidation = 1 << 7,
+        RegionCommit = 1 << 8,
+        LegacyAnchorCommit = 1 << 9
     }
 
     /// <summary>Stable, deterministic identity helpers shared by all providers.</summary>
@@ -338,19 +386,31 @@ namespace DeferredReality.API
     {
         private static int mainThreadId;
 
-        /// <summary>Registers the current thread as the RimWorld main thread.</summary>
-        public static void InitializeMainThread()
+        /// <summary>Registers the current thread from an explicit RimWorld startup lifecycle point.</summary>
+        public static void EstablishMainThread()
         {
-            if (mainThreadId == 0) mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            int currentThreadId = Thread.CurrentThread.ManagedThreadId;
+            if (mainThreadId == 0)
+            {
+                mainThreadId = currentThreadId;
+                return;
+            }
+            if (mainThreadId != currentThreadId)
+                throw new InvalidOperationException("Deferred Reality main-thread identity was already established by another thread.");
         }
 
+        /// <summary>Backward-compatible explicit initializer. It is never called implicitly by a mutation.</summary>
+        [Obsolete("Call EstablishMainThread from the RimWorld startup lifecycle instead.")]
+        public static void InitializeMainThread() => EstablishMainThread();
+
         /// <summary>Whether the current caller is the registered main thread.</summary>
-        public static bool IsMainThread => mainThreadId == 0 || Thread.CurrentThread.ManagedThreadId == mainThreadId;
+        public static bool IsMainThread => mainThreadId != 0 && Thread.CurrentThread.ManagedThreadId == mainThreadId;
 
         /// <summary>Throws when a caller attempts to mutate Verse state from a worker thread.</summary>
         public static void RequireMainThread()
         {
-            InitializeMainThread();
+            if (mainThreadId == 0)
+                throw new InvalidOperationException("Deferred Reality main thread has not been established by RimWorld startup.");
             if (!IsMainThread) throw new InvalidOperationException("Deferred Reality mutations must run on RimWorld's main thread.");
         }
     }

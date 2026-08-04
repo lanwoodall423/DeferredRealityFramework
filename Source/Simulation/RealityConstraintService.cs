@@ -65,19 +65,29 @@ namespace DeferredReality.Simulation
             return result;
         }
 
+        /// <summary>Returns whether two constraints explicitly or conservatively share a conflict domain.</summary>
+        public static bool ConflictDomainsIntersect(RealityConstraint left, RealityConstraint right)
+        {
+            if (left == null || right == null) return false;
+            return ConflictDomains(left).Intersect(ConflictDomains(right), StringComparer.Ordinal).Any();
+        }
+
+        /// <summary>Returns whether differing payloads describe incompatible facets in a shared domain.</summary>
+        public static bool AreSemanticallyIncompatible(RealityConstraint left, RealityConstraint right)
+        {
+            if (left == null || right == null || string.Equals(left.payload, right.payload, StringComparison.Ordinal)) return false;
+            HashSet<string> leftFacets = Keys(left.conflictFacetKeys);
+            HashSet<string> rightFacets = Keys(right.conflictFacetKeys);
+            return leftFacets.Count == 0 || rightFacets.Count == 0 || leftFacets.Intersect(rightFacets, StringComparer.Ordinal).Any();
+        }
+
         private static bool FindConflict(DeferredRealityWorldComponent world, RealityConstraint value,
             IReadOnlyList<RealityConstraint> all, long now)
         {
-            IEnumerable<string> subjects = (value.affectedAnchorIds ?? new List<string>()).Concat(value.affectedPopulationIds ?? new List<string>());
-            string fallback = value.regionId + ":" + value.typeId;
-            List<string> keys = subjects.Any() ? subjects.Select(item => "subject:" + item).ToList() : new List<string> { fallback };
             foreach (RealityConstraint other in all)
             {
                 if (other.constraintId == value.constraintId || !other.AppliesAt(now) || other.status == RealityConstraintStatus.Expired) continue;
-                IEnumerable<string> otherSubjects = (other.affectedAnchorIds ?? new List<string>()).Concat(other.affectedPopulationIds ?? new List<string>());
-                string otherFallback = other.regionId + ":" + other.typeId;
-                List<string> otherKeys = otherSubjects.Any() ? otherSubjects.Select(item => "subject:" + item).ToList() : new List<string> { otherFallback };
-                if (!keys.Intersect(otherKeys, StringComparer.Ordinal).Any() || value.payload == other.payload) continue;
+                if (!ConflictDomainsIntersect(value, other) || !AreSemanticallyIncompatible(value, other)) continue;
                 world.AddConflict(value.regionId, value.constraintId, other.constraintId,
                     "Established constraints describe incompatible deferred outcomes.", now);
                 if (ValueWins(value, other))
@@ -89,6 +99,31 @@ namespace DeferredReality.Simulation
                 return true;
             }
             return false;
+        }
+
+        private static HashSet<string> ConflictDomains(RealityConstraint value)
+        {
+            var explicitDomains = Keys(value.conflictDomainKeys);
+            if (explicitDomains.Count > 0)
+                return new HashSet<string>(explicitDomains.Select(item => "explicit:" + item), StringComparer.Ordinal);
+
+            string prefix = (value.providerId ?? string.Empty) + "|" + (value.typeId ?? string.Empty);
+            HashSet<string> facets = Keys(value.conflictFacetKeys);
+            IEnumerable<string> subjects = (value.affectedAnchorIds ?? new List<string>())
+                .Concat(value.affectedPopulationIds ?? new List<string>())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.Ordinal);
+            if (subjects.Any())
+                return new HashSet<string>(subjects.Select(subject => "legacy:" + prefix + "|subject:" + subject), StringComparer.Ordinal);
+            if (facets.Count > 0)
+                return new HashSet<string>(facets.Select(facet => "legacy:" + prefix + "|facet:" + facet), StringComparer.Ordinal);
+            return new HashSet<string>(new[] { "legacy:" + prefix + "|region:" + (value.regionId ?? string.Empty) }, StringComparer.Ordinal);
+        }
+
+        private static HashSet<string> Keys(IEnumerable<string> values)
+        {
+            return new HashSet<string>((values ?? Enumerable.Empty<string>())
+                .Where(item => !string.IsNullOrWhiteSpace(item)).Select(item => item.Trim()), StringComparer.Ordinal);
         }
 
         private static bool ValueWins(RealityConstraint value, RealityConstraint other)
