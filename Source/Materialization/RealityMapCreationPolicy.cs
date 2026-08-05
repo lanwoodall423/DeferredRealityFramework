@@ -3,9 +3,30 @@ using DeferredReality.API;
 
 namespace DeferredReality.Materialization
 {
+    public enum RealityMapCreationIntentDisposition
+    {
+        ActiveTransition,
+        ExactCreatedMap,
+        Committed,
+        FailedRecovery,
+        Stale,
+        Ambiguous
+    }
+
     /// <summary>Pure checks for transaction-scoped adjacent map classification.</summary>
     public static class RealityMapCreationPolicy
     {
+        public static RealityMapCreationIntentDisposition ResolveDisposition(bool activeTransition,
+            bool committedMarker, bool exactCreatedMap, bool recoveryReference, bool identityValid)
+        {
+            if (committedMarker) return RealityMapCreationIntentDisposition.Committed;
+            if (activeTransition) return RealityMapCreationIntentDisposition.ActiveTransition;
+            if (!identityValid) return RealityMapCreationIntentDisposition.Ambiguous;
+            if (exactCreatedMap) return RealityMapCreationIntentDisposition.ExactCreatedMap;
+            if (recoveryReference) return RealityMapCreationIntentDisposition.FailedRecovery;
+            return RealityMapCreationIntentDisposition.Stale;
+        }
+
         public static bool IsOwnerClaimCompatible(RealityRegionId expectedRegion, string expectedOwner,
             RealityMapIdentityClaim claim)
         {

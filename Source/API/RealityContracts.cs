@@ -73,6 +73,33 @@ namespace DeferredReality.API
         {
             return new RealityRandomStream(RealityDeterminism.Seed(WorldSeed, string.Empty, ProviderId, operationId, epoch));
         }
+
+        /// <summary>Declares a provider/domain sequence boundary used for replay-safe marker retention.</summary>
+        public bool DeclareExactlyOnceDomain(string kind, string domainId, bool allowGaps, string proof)
+        {
+            return World != null && World.DeclareExactlyOnceDomain(ProviderId, kind, domainId, allowGaps, proof);
+        }
+
+        /// <summary>Advances a declared provider/domain cursor after its sequenced operation is durably committed.</summary>
+        public bool AdvanceExactlyOnceCursor(string kind, string domainId, long sequence, string proof)
+        {
+            return World != null && World.AdvanceExactlyOnceCursor(ProviderId, kind, domainId, sequence, proof);
+        }
+    }
+
+    /// <summary>Provider declaration for a durable exactly-once sequence domain.</summary>
+    public sealed class RealityExactlyOnceDomain
+    {
+        public string kind;
+        public string domainId;
+        public bool allowGaps;
+        public string proof;
+    }
+
+    /// <summary>Optional provider description for a sequence domain before it is persisted.</summary>
+    public interface IRealityExactlyOnceProvider
+    {
+        bool TryDescribeExactlyOnceDomain(string kind, string domainId, out RealityExactlyOnceDomain domain);
     }
 
     /// <summary>Public provider extension point. Providers may implement any capability interfaces below.</summary>

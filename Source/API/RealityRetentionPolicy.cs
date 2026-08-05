@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using DeferredReality.Simulation;
 
 namespace DeferredReality.API
 {
@@ -62,21 +63,26 @@ namespace DeferredReality.API
 
         public static bool CanExpireOperation(RealityProviderRegistration registration, string kind, long appliedTick, long now)
         {
-            if (registration == null || registration.operationRetentionTicks <= 0 ||
-                string.IsNullOrEmpty(kind) || appliedTick >= now) return false;
-            if (!(registration.compactableOperationKinds ?? new List<string>()).Contains(kind, StringComparer.Ordinal)) return false;
-            return now - appliedTick >= registration.operationRetentionTicks;
+            // A tick watermark or age is not a replay boundary. Keep this overload for
+            // source compatibility, but never authorize deletion without a sequence.
+            return false;
         }
 
         /// <summary>Operation age is insufficient by itself; a matching persisted watermark must prove replay is impossible.</summary>
         public static bool CanExpireOperation(RealityProviderRegistration registration, RealityAppliedOperation operation,
             IEnumerable<RealityOperationRetentionWatermark> watermarks, long now)
         {
-            if (operation == null || !CanExpireOperation(registration, operation.kind, operation.tick, now) ||
-                string.IsNullOrEmpty(operation.domainId)) return false;
-            return (watermarks ?? Enumerable.Empty<RealityOperationRetentionWatermark>()).Any(watermark =>
-                watermark != null && watermark.providerId == operation.providerId && watermark.kind == operation.kind &&
-                watermark.domainId == operation.domainId && watermark.safeThroughTick >= operation.tick);
+            if (operation == null || registration == null || registration.operationRetentionTicks <= 0 ||
+                string.IsNullOrEmpty(operation.providerId) || string.IsNullOrEmpty(operation.kind) ||
+                string.IsNullOrEmpty(operation.domainId) || operation.sequence < 0 ||
+                !(registration.compactableOperationKinds ?? new List<string>()).Contains(operation.kind, StringComparer.Ordinal))
+                return false;
+            RealityOperationRetentionWatermark watermark = (watermarks ?? Enumerable.Empty<RealityOperationRetentionWatermark>())
+                .FirstOrDefault(item => item != null && item.providerId == operation.providerId &&
+                    item.kind == operation.kind && item.domainId == operation.domainId);
+            return watermark != null && RealityExactlyOncePolicy.IsProvenExpired(operation.sequence,
+                watermark.sequenceMode, watermark.sequenceCursor, watermark.proof, operation.tick, now,
+                registration.operationRetentionTicks);
         }
 
         public static bool IsTerminalExcursion(RealityExcursionTicket ticket)

@@ -28,6 +28,7 @@ namespace DeferredReality.PureTests
                 RetentionSelection();
                 TransitionCompensationSeams();
                 PartialPrepareRollbackAndRetention();
+                ExactlyOnceSequenceBoundaries();
                 MapIdentityClaims();
                 MapCreationIntentBoundaries();
                 ConstraintDomainsAndFacets();
@@ -173,7 +174,8 @@ namespace DeferredReality.PureTests
                 providerId = "retention", operationRetentionTicks = 100,
                 compactableOperationKinds = new List<string> { "safe" }
             };
-            Require(RealityRetentionPolicy.CanExpireOperation(registration, "safe", 100, 200), "safe operation did not expire");
+            Require(!RealityRetentionPolicy.CanExpireOperation(registration, "safe", 100, 200),
+                "operation age alone authorized expiry");
             Require(!RealityRetentionPolicy.CanExpireOperation(registration, "unknown", 1, 1000), "unknown operation domain expired");
             var first = new RealityObservationRecord { observationId = "z", tick = 4 };
             var second = new RealityObservationRecord { observationId = "a", tick = 4 };
@@ -254,6 +256,17 @@ namespace DeferredReality.PureTests
             ticket.terminalTick = -1;
             Require(RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, 2),
                 "cancelled excursion awaiting exact return stopped blocking its maps");
+            Require(!RealityRetentionPolicy.IsTerminalExcursion(ticket),
+                "unresolved cancellation was classified as terminal");
+            ticket.terminalTick = 250;
+            Require(RealityRetentionPolicy.IsTerminalExcursion(ticket) &&
+                !RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, 2),
+                "cancelled excursion with verified return remained an active lease");
+            ticket.status = RealityExcursionStatus.ReturnRequested;
+            ticket.terminalTick = -1;
+            Require(!RealityRetentionPolicy.IsTerminalExcursion(ticket) &&
+                RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, 2),
+                "return-requested excursion was treated as historical");
         }
 
         private static void ThreadGuardDoesNotSelfInitialize()
@@ -294,10 +307,10 @@ namespace DeferredReality.PureTests
                 Require(second.RollbackOrder < first.RollbackOrder || first.RollbackOrder == 0,
                     "rollback order was not reverse deterministic");
             }
-            var owners = new[] { "lan.wildlife", "lan.aquaculture", "lan.wildlife" };
-            IReadOnlyList<string> selected = RealityTransitionPolicy.SelectOwner(owners, "lan.wildlife",
-                item => item, item => item == "lan.wildlife" ? 1 : 2);
-            Require(selected.Count == 2 && selected.All(item => item == "lan.wildlife"),
+            var owners = new[] { "provider.alpha", "provider.beta", "provider.alpha" };
+            IReadOnlyList<string> selected = RealityTransitionPolicy.SelectOwner(owners, "provider.alpha",
+                item => item, item => item == "provider.alpha" ? 1 : 2);
+            Require(selected.Count == 2 && selected.All(item => item == "provider.alpha"),
                 "compression/provider selection escaped its owner scope");
             Require(RealityTransitionPolicy.SelectOwner(owners, "missing", item => item, item => 0).Count == 0,
                 "missing ownership did not fail closed");
@@ -325,7 +338,7 @@ namespace DeferredReality.PureTests
             };
             var operation = new RealityAppliedOperation
             {
-                operationId = "op", providerId = "retention", kind = "demography", domainId = "population:1", tick = 100
+                operationId = "op", providerId = "retention", kind = "demography", domainId = "population:1", sequence = 4, tick = 100
             };
             Require(!RealityRetentionPolicy.CanExpireOperation(registration, operation,
                     Array.Empty<RealityOperationRetentionWatermark>(), 300),
@@ -335,7 +348,7 @@ namespace DeferredReality.PureTests
                 new RealityOperationRetentionWatermark
                 {
                     providerId = "retention", kind = "demography", domainId = "population:1",
-                    safeThroughTick = 150, proof = "durable-population-watermark"
+                    sequenceMode = true, sequenceCursor = 4, safeThroughTick = 150, proof = "durable-population-cursor"
                 }
             }, 300), "a proven operation watermark did not permit safe expiry");
             Require(!RealityRetentionPolicy.CanExpireOperation(registration, operation, new[]
@@ -343,20 +356,20 @@ namespace DeferredReality.PureTests
                 new RealityOperationRetentionWatermark
                 {
                     providerId = "retention", kind = "demography", domainId = "population:2",
-                    safeThroughTick = 300, proof = "wrong-domain"
+                    sequenceMode = true, sequenceCursor = 4, safeThroughTick = 300, proof = "wrong-domain"
                 }
             }, 300), "a watermark for another operation domain expired a marker");
             var transferOperation = new RealityAppliedOperation
             {
                 operationId = "transfer-op", providerId = "retention", kind = "transfer",
-                domainId = "population:1->population:2", tick = 100
+                domainId = "population:1->population:2", sequence = 8, tick = 100
             };
             Require(RealityRetentionPolicy.CanExpireOperation(registration, transferOperation, new[]
             {
                 new RealityOperationRetentionWatermark
                 {
                     providerId = "retention", kind = "transfer", domainId = "population:1->population:2",
-                    safeThroughTick = 150, proof = "durable-transfer-watermark"
+                    sequenceMode = true, sequenceCursor = 8, safeThroughTick = 150, proof = "durable-transfer-cursor"
                 }
             }, 300), "a proven transfer watermark did not permit safe expiry");
 
@@ -392,6 +405,44 @@ namespace DeferredReality.PureTests
                 "eviction ordering changed with dictionary/input enumeration order");
         }
 
+        private static void ExactlyOnceSequenceBoundaries()
+        {
+            Require(RealityExactlyOncePolicy.CanAccept(-1, 0, false), "the first contiguous sequence was rejected");
+            Require(!RealityExactlyOncePolicy.CanAccept(-1, 1, false), "a strict domain accepted a gap");
+            Require(RealityExactlyOncePolicy.CanAccept(0, 1, false), "the next sequence was rejected");
+            Require(!RealityExactlyOncePolicy.CanAccept(0, 0, false), "a duplicate sequence was accepted");
+            Require(!RealityExactlyOncePolicy.CanAccept(0, -1, false), "a negative sequence was accepted");
+            Require(RealityExactlyOncePolicy.CanAccept(0, 4, true), "a gap-tolerant domain rejected a later sequence");
+            Require(!RealityExactlyOncePolicy.CanAccept(4, 4, true), "a cursor did not reject replay after marker compaction");
+
+            var operation = new RealityAppliedOperation
+            {
+                operationId = "sequence-op", providerId = "retention", kind = "demography",
+                domainId = "population:1", sequence = 4, tick = 100
+            };
+            var registration = new RealityProviderRegistration
+            {
+                providerId = "retention", operationRetentionTicks = 100,
+                compactableOperationKinds = new List<string> { "demography" }
+            };
+            var cursor = new RealityOperationRetentionWatermark
+            {
+                providerId = "retention", kind = "demography", domainId = "population:1",
+                sequenceMode = true, sequenceCursor = 4, proof = "cursor-committed", safeThroughTick = 100
+            };
+            Require(RealityRetentionPolicy.CanExpireOperation(registration, operation, new[] { cursor }, 300),
+                "a proven sequence cursor did not permit safe marker expiry");
+            Require(!RealityRetentionPolicy.CanExpireOperation(registration,
+                    new RealityAppliedOperation { operationId = "legacy", providerId = "retention", kind = "demography",
+                        domainId = "population:1", sequence = -1, tick = 100 }, new[] { cursor }, 300),
+                "a legacy operation-ID marker was compacted by a sequence cursor");
+            var oldSaveCursor = new RealityOperationRetentionWatermark();
+            Require(oldSaveCursor.sequenceCursor == -1 && !oldSaveCursor.sequenceMode,
+                "old operation watermark defaults were not durable");
+            Require(RealityExactlyOncePolicy.CanAccept(cursor.sequenceCursor, 5, cursor.allowGaps),
+                "a later operation was not accepted after cursor restoration");
+        }
+
         private static void MapIdentityClaims()
         {
             RealityRegionId surface = RealityRegionId.Surface(7);
@@ -421,14 +472,14 @@ namespace DeferredReality.PureTests
             RealityRegionId surface = RealityRegionId.Surface(7);
             var claim = new RealityMapIdentityClaim
             {
-                providerId = "lan.wildlife", regionId = surface, identityKey = "wildlife:surface:7"
+                providerId = "provider.adjacent", regionId = surface, identityKey = "provider:surface:7"
             };
-            Require(RealityMapCreationPolicy.IsOwnerClaimCompatible(surface, "lan.wildlife", claim),
-                "core surface region could not be owned by an explicit Wildlife adjacent site");
+            Require(RealityMapCreationPolicy.IsOwnerClaimCompatible(surface, "provider.adjacent", claim),
+                "core surface region could not be owned by an explicit adjacent provider");
             var intent = new RealityMapCreationIntentRecord
             {
                 transactionId = "materialize:test",
-                providerId = "lan.wildlife",
+                providerId = "provider.adjacent",
                 regionId = surface.ToString(),
                 originRegionId = RealityRegionId.Surface(6).ToString(),
                 originMapUniqueId = 6,
@@ -456,6 +507,15 @@ namespace DeferredReality.PureTests
             {
                 transactionId = intent.transactionId, mapUniqueId = 77
             }), "an unbound creation intent was cleared by load repair");
+            Require(RealityMapCreationPolicy.ResolveDisposition(false, true, false, false, true) ==
+                RealityMapCreationIntentDisposition.Committed &&
+                RealityMapCreationPolicy.ResolveDisposition(false, false, false, false, true) ==
+                RealityMapCreationIntentDisposition.Stale &&
+                RealityMapCreationPolicy.ResolveDisposition(false, false, false, true, true) ==
+                RealityMapCreationIntentDisposition.FailedRecovery &&
+                RealityMapCreationPolicy.ResolveDisposition(false, false, false, false, false) ==
+                RealityMapCreationIntentDisposition.Ambiguous,
+                "creation-intent load dispositions were not deterministic");
         }
 
         private static void ConstraintDomainsAndFacets()

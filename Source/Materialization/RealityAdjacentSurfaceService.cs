@@ -129,7 +129,7 @@ namespace DeferredReality.Materialization
                     return result;
                 }
                 request.transferId = string.IsNullOrEmpty(request.transferId) ? ticket.returnTransferId : request.transferId;
-                if (ticket.status == RealityExcursionStatus.Completed ||
+                if (RealityRetentionPolicy.IsTerminalExcursion(ticket) ||
                     ticket.providerId != request.providerId ||
                     ticket.returnTransferId != request.transferId ||
                     request.pawns == null || request.pawns.Count != 1 ||
@@ -505,7 +505,7 @@ namespace DeferredReality.Materialization
 
         private static void MonitorExcursion(DeferredRealityWorldComponent world, RealityExcursionTicket ticket, long now)
         {
-            if (ticket == null || ticket.status == RealityExcursionStatus.Completed ||
+            if (ticket == null || RealityRetentionPolicy.IsTerminalExcursion(ticket) ||
                 ticket.status == RealityExcursionStatus.Quarantined || ticket.retryTick > now) return;
             Pawn pawn = FindPawnAnywhere(ticket.pawnLoadId, out Map pawnMap, out bool inCaravanOrWorldPawns,
                 out bool ambiguousOwnership);

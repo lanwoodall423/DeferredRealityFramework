@@ -58,9 +58,12 @@ namespace DeferredReality.API
         private readonly Dictionary<string, RealityExcursionTicket> activeExcursionById = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityMapCreationIntentRecord> mapCreationIntentById =
             new Dictionary<string, RealityMapCreationIntentRecord>(StringComparer.Ordinal);
+        private readonly HashSet<string> activeMapCreationTransactions =
+            new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityExcursionTicket> pendingExcursions = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
         private readonly Dictionary<string, Pawn> pendingExcursionPawns = new Dictionary<string, Pawn>(StringComparer.Ordinal);
         private readonly Dictionary<string, Pawn> excursionPawnInstances = new Dictionary<string, Pawn>(StringComparer.Ordinal);
+        private bool mapCreationIntentReconciliationPending;
         private bool initialized;
         private bool indexesReady;
         private bool processScheduleCacheReady;
@@ -172,6 +175,14 @@ namespace DeferredReality.API
                 RepairAndIndex();
             }
             long now = Now;
+            if (mapCreationIntentReconciliationPending && Find.Maps != null)
+            {
+                mapCreationIntents = ReconcileMapCreationIntents(mapCreationIntents);
+                mapCreationIntentById.Clear();
+                foreach (RealityMapCreationIntentRecord intent in mapCreationIntents.Where(item =>
+                    item != null && !string.IsNullOrEmpty(item.transactionId)))
+                    mapCreationIntentById[intent.transactionId] = intent;
+            }
             if (HasRunnableProcessDue(now)) RealityProcessScheduler.RunDue(this, now, RealityProcessRunOptions.Default);
             RunStorageMaintenance(now, false);
             if ((DeferredRealityModSettings.Current.enableAdjacentRegions || HasAdjacentSafetyWork) && now >= nextAdjacentMonitorTick)
@@ -634,20 +645,69 @@ namespace DeferredReality.API
             return !string.IsNullOrEmpty(operationId) && appliedOperationIds.Contains(operationId);
         }
 
-        /// <summary>Persists an exactly-once operation marker.</summary>
-        public bool RecordAppliedOperation(string operationId, string providerId, string kind, long tick, string domainId = null)
+        /// <summary>Returns whether a sequenced operation may be accepted before state mutation.</summary>
+        public bool ValidateOperationSequence(string providerId, string kind, string domainId, long sequence,
+            out string diagnostic)
+        {
+            diagnostic = null;
+            string normalizedProvider = providerId?.Trim();
+            string normalizedKind = kind?.Trim();
+            string normalizedDomain = domainId?.Trim();
+            if (sequence < 0)
+            {
+                bool sequencedDomain = operationWatermarks.Any(item => item != null && item.sequenceMode &&
+                    item.providerId == normalizedProvider && item.kind == normalizedKind && item.domainId == normalizedDomain);
+                if (!sequencedDomain) return true;
+                diagnostic = "The declared operation domain requires a sequence.";
+                return false;
+            }
+            if (string.IsNullOrEmpty(normalizedProvider) || string.IsNullOrEmpty(normalizedKind) ||
+                string.IsNullOrEmpty(normalizedDomain))
+            {
+                diagnostic = "A sequenced operation requires provider, kind, and domain identities.";
+                return false;
+            }
+            RealityOperationRetentionWatermark cursor = operationWatermarks.FirstOrDefault(item => item != null &&
+                item.providerId == normalizedProvider && item.kind == normalizedKind && item.domainId == normalizedDomain);
+            if (cursor == null || !cursor.sequenceMode)
+            {
+                diagnostic = "The operation domain has no declared durable sequence cursor.";
+                return false;
+            }
+            if (!RealityExactlyOncePolicy.CanAccept(cursor.sequenceCursor, sequence, cursor.allowGaps))
+            {
+                diagnostic = cursor.allowGaps
+                    ? "The operation sequence is not greater than the accepted cursor."
+                    : "The operation sequence is not the next contiguous sequence.";
+                return false;
+            }
+            if (appliedOperations.Any(item => item != null && item.sequence == sequence &&
+                item.providerId == normalizedProvider && item.kind == normalizedKind && item.domainId == normalizedDomain))
+            {
+                diagnostic = "The operation sequence is already represented by a durable marker.";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>Persists an exactly-once operation marker after sequence validation.</summary>
+        public bool RecordAppliedOperation(string operationId, string providerId, string kind, long tick,
+            string domainId = null, long sequence = -1)
         {
             RealityThreadGuard.RequireMainThread();
             if (string.IsNullOrEmpty(operationId)) return false;
             EnsureIndexes();
+            if (!ValidateOperationSequence(providerId, kind, domainId, sequence, out _)) return false;
             if (!appliedOperationIds.Add(operationId)) return false;
             appliedOperations.Add(new RealityAppliedOperation
             {
                 operationId = operationId,
                 providerId = providerId,
                 domainId = string.IsNullOrWhiteSpace(domainId) ? null : domainId.Trim(),
+                sequence = sequence,
                 kind = kind,
-                tick = tick
+                tick = tick,
+                schemaVersion = 2
             });
             Touch("operation.applied", providerId, null, operationId);
             MarkStorageMaintenanceDirty(tick);
@@ -659,7 +719,8 @@ namespace DeferredReality.API
         {
             RealityThreadGuard.RequireMainThread();
             if (value == null || string.IsNullOrWhiteSpace(value.providerId) || string.IsNullOrWhiteSpace(value.kind) ||
-                string.IsNullOrWhiteSpace(value.domainId) || value.safeThroughTick < 0) return false;
+                string.IsNullOrWhiteSpace(value.domainId) || (!value.sequenceMode && value.safeThroughTick < 0) ||
+                (value.sequenceMode && (value.sequenceCursor < -1 || string.IsNullOrWhiteSpace(value.proof)))) return false;
             value.providerId = value.providerId.Trim();
             value.kind = value.kind.Trim();
             value.domainId = value.domainId.Trim();
@@ -668,12 +729,64 @@ namespace DeferredReality.API
                 item.kind == value.kind && item.domainId == value.domainId);
             if (index >= 0)
             {
-                if (operationWatermarks[index].safeThroughTick > value.safeThroughTick) return false;
+                RealityOperationRetentionWatermark existing = operationWatermarks[index];
+                if (existing.sequenceMode && !value.sequenceMode) return false;
+                if (existing.sequenceMode && value.sequenceMode && existing.sequenceCursor > value.sequenceCursor) return false;
+                if (!existing.sequenceMode && !value.sequenceMode && existing.safeThroughTick > value.safeThroughTick) return false;
                 operationWatermarks[index] = value.Clone();
             }
             else operationWatermarks.Add(value.Clone());
             Touch("operation.watermark", value.providerId, value.kind, value.domainId);
             MarkStorageMaintenanceDirty(value.updatedTick);
+            return true;
+        }
+
+        /// <summary>Declares a provider/domain sequence cursor. Legacy tick proofs are never upgraded implicitly.</summary>
+        public bool DeclareExactlyOnceDomain(string providerId, string kind, string domainId, bool allowGaps, string proof)
+        {
+            RealityThreadGuard.RequireMainThread();
+            if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(kind) ||
+                string.IsNullOrWhiteSpace(domainId) || string.IsNullOrWhiteSpace(proof)) return false;
+            if (RealityProviderRegistry.TryGet(providerId.Trim(), out IRealityProvider provider) &&
+                provider is IRealityExactlyOnceProvider descriptor &&
+                (!descriptor.TryDescribeExactlyOnceDomain(kind.Trim(), domainId.Trim(), out RealityExactlyOnceDomain domain) ||
+                 domain == null || domain.kind != kind.Trim() || domain.domainId != domainId.Trim() ||
+                 domain.allowGaps != allowGaps)) return false;
+            RealityOperationRetentionWatermark existing = operationWatermarks.FirstOrDefault(item => item != null &&
+                item.providerId == providerId.Trim() && item.kind == kind.Trim() && item.domainId == domainId.Trim());
+            if (existing != null && existing.sequenceMode) return true;
+            if (existing != null && existing.sequenceCursor >= 0) return false;
+            return UpsertOperationRetentionWatermark(new RealityOperationRetentionWatermark
+            {
+                schemaVersion = 2,
+                providerId = providerId.Trim(),
+                kind = kind.Trim(),
+                domainId = domainId.Trim(),
+                sequenceMode = true,
+                sequenceCursor = -1,
+                allowGaps = allowGaps,
+                proof = proof.Trim(),
+                updatedTick = Now
+            });
+        }
+
+        /// <summary>Advances a declared cursor only after its matching sequenced marker is durable.</summary>
+        public bool AdvanceExactlyOnceCursor(string providerId, string kind, string domainId, long sequence, string proof)
+        {
+            RealityThreadGuard.RequireMainThread();
+            RealityOperationRetentionWatermark cursor = operationWatermarks.FirstOrDefault(item => item != null &&
+                item.providerId == providerId?.Trim() && item.kind == kind?.Trim() && item.domainId == domainId?.Trim());
+            if (cursor == null || !cursor.sequenceMode || string.IsNullOrWhiteSpace(proof) || sequence < 0) return false;
+            if (sequence == cursor.sequenceCursor) return true;
+            if (!RealityExactlyOncePolicy.CanAdvance(cursor.sequenceCursor, sequence, cursor.allowGaps)) return false;
+            if (!appliedOperations.Any(item => item != null && item.providerId == cursor.providerId &&
+                item.kind == cursor.kind && item.domainId == cursor.domainId && item.sequence == sequence)) return false;
+            cursor.sequenceCursor = sequence;
+            cursor.safeThroughTick = Math.Max(cursor.safeThroughTick, Now);
+            cursor.updatedTick = Now;
+            cursor.proof = proof.Trim();
+            Touch("operation.cursor", cursor.providerId, cursor.kind, cursor.domainId);
+            MarkStorageMaintenanceDirty(Now);
             return true;
         }
 
@@ -814,6 +927,7 @@ namespace DeferredReality.API
             };
             mapCreationIntents.Add(intent);
             mapCreationIntentById[transactionId] = intent;
+            activeMapCreationTransactions.Add(transactionId);
             Touch("adjacent-map.intent-created", owner, regionKey, transactionId);
             return true;
         }
@@ -842,6 +956,7 @@ namespace DeferredReality.API
             if (quarantine && !string.IsNullOrEmpty(diagnostic))
                 QuarantineInternal("map-creation-intent", transactionId, intent.providerId, diagnostic, intent.regionId, Now);
             mapCreationIntentById.Remove(transactionId);
+            activeMapCreationTransactions.Remove(transactionId);
             mapCreationIntents.RemoveAll(item => item != null && item.transactionId == transactionId);
             Touch("adjacent-map.intent-cleared", intent.providerId, intent.regionId, transactionId);
         }
@@ -907,7 +1022,8 @@ namespace DeferredReality.API
         private bool RegisterAdjacentMapFromCreationIntent(Map map, RealityRegionId regionId,
             RealityMapCreationIntentRecord intent)
         {
-            if (map == null || intent == null || !regionId.IsValid || intent.createdMapUniqueId >= 0 &&
+            if (map == null || intent == null || intent.lifecycle != RealityAdjacentMapLifecycle.Materializing ||
+                !regionId.IsValid || intent.createdMapUniqueId >= 0 &&
                 intent.createdMapUniqueId != map.uniqueID) return false;
             if (!RealityProviderRegistry.TryGet(intent.providerId, out _)) return false;
             RealityAdjacentMapRecord existing = adjacentMapById.TryGetValue(map.uniqueID, out RealityAdjacentMapRecord value)
@@ -948,6 +1064,7 @@ namespace DeferredReality.API
             if (existing == null) adjacentMaps.Add(record);
             adjacentMapById[record.mapUniqueId] = record;
             mapCreationIntentById.Remove(intent.transactionId);
+            activeMapCreationTransactions.Remove(intent.transactionId);
             mapCreationIntents.RemoveAll(item => item != null && item.transactionId == intent.transactionId);
             Touch("adjacent-map.marked", record.providerId, record.regionId, record.mapUniqueId.ToString());
             return true;
@@ -1267,7 +1384,7 @@ namespace DeferredReality.API
             if (!pendingExcursions.TryGetValue(excursionId, out RealityExcursionTicket ticket))
             {
                 if (excursionById.TryGetValue(excursionId, out RealityExcursionTicket existing) &&
-                    existing.status == RealityExcursionStatus.Completed) return true;
+                    RealityRetentionPolicy.IsTerminalExcursion(existing)) return true;
                 if (excursionById.TryGetValue(excursionId, out existing) &&
                     pawn.Map.uniqueID == existing.originMapUniqueId)
                 {
@@ -1343,7 +1460,7 @@ namespace DeferredReality.API
         {
             RealityThreadGuard.RequireMainThread();
             if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket) ||
-                ticket.status == RealityExcursionStatus.Completed || ticket.status == RealityExcursionStatus.Quarantined) return false;
+                RealityRetentionPolicy.IsTerminalExcursion(ticket) || ticket.status == RealityExcursionStatus.Quarantined) return false;
             ticket.status = status;
             ticket.retryTick = Now;
             ticket.diagnostic = diagnostic;
@@ -1357,7 +1474,7 @@ namespace DeferredReality.API
         {
             RealityThreadGuard.RequireMainThread();
             if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket) ||
-                ticket.status == RealityExcursionStatus.Quarantined) return false;
+                RealityRetentionPolicy.IsTerminalExcursion(ticket) || ticket.status == RealityExcursionStatus.Quarantined) return false;
             ticket.status = RealityExcursionStatus.Returning;
             activeExcursionById[ticket.excursionId] = ticket;
             ticket.retryTick = retryTick;
@@ -1370,7 +1487,7 @@ namespace DeferredReality.API
         {
             RealityThreadGuard.RequireMainThread();
             if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket) ||
-                ticket.status == RealityExcursionStatus.Quarantined) return false;
+                RealityRetentionPolicy.IsTerminalExcursion(ticket) || ticket.status == RealityExcursionStatus.Quarantined) return false;
             if (ticket.status != RealityExcursionStatus.Cancelled) ticket.status = RealityExcursionStatus.ReturnRequested;
             activeExcursionById[ticket.excursionId] = ticket;
             ticket.retryTick = retryTick;
@@ -1382,7 +1499,8 @@ namespace DeferredReality.API
         internal bool SetExcursionDiagnostic(string excursionId, string diagnostic, long retryTick = -1)
         {
             RealityThreadGuard.RequireMainThread();
-            if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket)) return false;
+            if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket) ||
+                RealityRetentionPolicy.IsTerminalExcursion(ticket) || ticket.status == RealityExcursionStatus.Quarantined) return false;
             if (string.Equals(ticket.diagnostic, diagnostic, StringComparison.Ordinal) &&
                 (retryTick < 0 || ticket.retryTick == retryTick)) return true;
             ticket.diagnostic = diagnostic;
@@ -1417,7 +1535,7 @@ namespace DeferredReality.API
         private bool HasActiveExcursionForPawn(string pawnLoadId, string exceptExcursionId)
         {
             return excursions.Any(ticket => ticket != null && ticket.excursionId != exceptExcursionId &&
-                ticket.pawnLoadId == pawnLoadId && ticket.status != RealityExcursionStatus.Completed &&
+                ticket.pawnLoadId == pawnLoadId && !RealityRetentionPolicy.IsTerminalExcursion(ticket) &&
                 ticket.status != RealityExcursionStatus.Quarantined) ||
                 pendingExcursions.Values.Any(ticket => ticket != null && ticket.excursionId != exceptExcursionId &&
                     ticket.pawnLoadId == pawnLoadId);
@@ -1589,6 +1707,7 @@ namespace DeferredReality.API
             pendingExcursions.Clear();
             pendingExcursionPawns.Clear();
             excursionPawnInstances.Clear();
+            activeMapCreationTransactions.Clear();
             mapCreationIntentById.Clear();
             indexesReady = false;
             processScheduleCacheReady = false;
@@ -1779,13 +1898,17 @@ namespace DeferredReality.API
             RepairList(observations, item => item?.observationId, "observation");
             mapAliases = mapAliases.Where(item => item != null && item.legacyMapId >= 0 && !string.IsNullOrEmpty(item.regionId)).ToList();
             migrations = migrations.Where(item => item != null && !string.IsNullOrEmpty(item.providerId) && !string.IsNullOrEmpty(item.consumerId)).ToList();
-            appliedOperations = appliedOperations.Where(item => item != null && !string.IsNullOrEmpty(item.operationId)).ToList();
+            appliedOperations = appliedOperations.Where(item => item != null && !string.IsNullOrEmpty(item.operationId) &&
+                item.sequence >= -1).ToList();
             RepairUnique(topology, item => item?.linkId, "topology");
             RepairUnique(mapAliases, item => item == null ? null : item.legacyMapId.ToString(), "map-alias");
             RepairUnique(migrations, item => item == null ? null : item.providerId + ":" + item.consumerId, "migration");
             RepairUnique(appliedOperations, item => item?.operationId, "operation");
             operationWatermarks = operationWatermarks.Where(item => item != null && !string.IsNullOrEmpty(item.providerId) &&
-                !string.IsNullOrEmpty(item.kind) && !string.IsNullOrEmpty(item.domainId) && item.safeThroughTick >= 0).ToList();
+                !string.IsNullOrEmpty(item.kind) && !string.IsNullOrEmpty(item.domainId) &&
+                (item.sequenceMode
+                    ? item.sequenceCursor >= -1 && !string.IsNullOrEmpty(item.proof)
+                    : item.safeThroughTick >= 0)).ToList();
             RepairUnique(operationWatermarks, item => item == null ? null : item.providerId + ":" + item.kind + ":" + item.domainId,
                 "operation-watermark");
             adjacentDiagnostics = adjacentDiagnostics.Where(item => item != null && !string.IsNullOrEmpty(item.diagnosticId)).ToList();
@@ -1806,8 +1929,7 @@ namespace DeferredReality.API
             foreach (RealityAdjacentMapRecord adjacentMap in adjacentMaps)
                 if (adjacentMap != null && adjacentMap.lifecycle != RealityAdjacentMapLifecycle.Retired)
                     adjacentMapById[adjacentMap.mapUniqueId] = adjacentMap;
-            mapCreationIntents = mapCreationIntents.Where(intent => intent != null &&
-                !adjacentMaps.Any(marker => RealityMapCreationPolicy.ShouldClearAfterLoad(intent, marker))).ToList();
+            mapCreationIntents = ReconcileMapCreationIntents(mapCreationIntents);
             foreach (RealityMapCreationIntentRecord intent in mapCreationIntents)
                 if (intent != null && !string.IsNullOrEmpty(intent.transactionId)) mapCreationIntentById[intent.transactionId] = intent;
             excursionById.Clear();
@@ -1950,6 +2072,99 @@ namespace DeferredReality.API
             return repaired;
         }
 
+        private List<RealityMapCreationIntentRecord> ReconcileMapCreationIntents(
+            List<RealityMapCreationIntentRecord> values)
+        {
+            // A save may be loaded before maps are reconstructed. Keep valid intents until
+            // the readiness path can compare them with an actual map identity.
+            if (Find.Maps == null)
+            {
+                mapCreationIntentReconciliationPending = true;
+                return values ?? new List<RealityMapCreationIntentRecord>();
+            }
+            mapCreationIntentReconciliationPending = false;
+
+            var reconciled = new List<RealityMapCreationIntentRecord>();
+            List<Map> liveMaps = Find.Maps.Where(item => item != null).OrderBy(item => item.uniqueID).ToList();
+            foreach (RealityMapCreationIntentRecord intent in (values ?? new List<RealityMapCreationIntentRecord>())
+                .Where(item => item != null).OrderBy(item => item.transactionId, StringComparer.Ordinal).ToList())
+            {
+                if (activeMapCreationTransactions.Contains(intent.transactionId))
+                {
+                    reconciled.Add(intent);
+                    continue;
+                }
+
+                RealityAdjacentMapRecord marker = adjacentMaps.FirstOrDefault(item => item != null &&
+                    item.transactionId == intent.transactionId);
+                if (marker != null)
+                {
+                    if (RealityMapCreationPolicy.ResolveDisposition(activeMapCreationTransactions.Contains(intent.transactionId),
+                        RealityMapCreationPolicy.ShouldClearAfterLoad(intent, marker), false, false, true) ==
+                        RealityMapCreationIntentDisposition.Committed) continue;
+                    QuarantineInternal("map-creation-intent", intent.transactionId, intent.providerId,
+                        "A creation intent conflicted with its persisted adjacent marker.", intent.regionId, Now);
+                    continue;
+                }
+
+                bool recoveryReference = transferJournals.Any(journal =>
+                    journal != null && RealityRetentionPolicy.IsInterruptedTransfer(journal) &&
+                    ((intent.createdMapUniqueId >= 0 &&
+                        (journal.sourceMapUniqueId == intent.createdMapUniqueId ||
+                         journal.destinationMapUniqueId == intent.createdMapUniqueId)) ||
+                     journal.providerId == intent.providerId && journal.sourceRegionId == intent.regionId));
+
+                if (intent.createdMapUniqueId >= 0)
+                {
+                    Map exactMap = liveMaps.FirstOrDefault(item => item.uniqueID == intent.createdMapUniqueId);
+                    bool providerAvailable = RealityProviderRegistry.TryGet(intent.providerId, out _);
+                    RealityMapCreationIntentDisposition disposition = RealityMapCreationPolicy.ResolveDisposition(
+                        false, false, exactMap != null, recoveryReference, providerAvailable);
+                    if (exactMap == null)
+                    {
+                        if (disposition == RealityMapCreationIntentDisposition.FailedRecovery)
+                        {
+                            intent.diagnostic = "Creation intent retained for interrupted transfer recovery.";
+                            reconciled.Add(intent);
+                        }
+                        else if (disposition != RealityMapCreationIntentDisposition.Stale)
+                        {
+                            QuarantineInternal("map-creation-intent", intent.transactionId, intent.providerId,
+                                "Creation intent failed without a matching created map.", intent.regionId, Now);
+                        }
+                        continue;
+                    }
+                    if (!providerAvailable)
+                    {
+                        intent.diagnostic = "Creation intent retained until its provider is available.";
+                        reconciled.Add(intent);
+                        continue;
+                    }
+                    if (disposition == RealityMapCreationIntentDisposition.ExactCreatedMap &&
+                        TryRegisterMapFromCreationIntent(exactMap, default(RealityRegionId), out _, out _))
+                        continue;
+
+                    QuarantineInternal("map-creation-intent", intent.transactionId, intent.providerId,
+                        "A live map matched the created ID but failed identity or ownership validation.", intent.regionId, Now);
+                    continue;
+                }
+
+                bool sameTileMap = RealityRegionId.TryParse(intent.regionId, out RealityRegionId expected) &&
+                    liveMaps.Any(item => item.Tile.Valid && item.Tile == (PlanetTile)expected.WorldTile);
+                RealityMapCreationIntentDisposition unboundDisposition = RealityMapCreationPolicy.ResolveDisposition(
+                    false, false, false, recoveryReference, !sameTileMap);
+                if (unboundDisposition == RealityMapCreationIntentDisposition.Ambiguous ||
+                    unboundDisposition == RealityMapCreationIntentDisposition.FailedRecovery)
+                {
+                    QuarantineInternal("map-creation-intent", intent.transactionId, intent.providerId,
+                        "An unbound creation intent was ambiguous during load reconciliation.", intent.regionId, Now);
+                    continue;
+                }
+                // No active transition, map, or recovery record can still consume this intent.
+            }
+            return reconciled;
+        }
+
         private List<RealityExcursionTicket> RepairExcursions(List<RealityExcursionTicket> values)
         {
             var repaired = new List<RealityExcursionTicket>();
@@ -1977,7 +2192,7 @@ namespace DeferredReality.API
                     repaired.Add(ticket);
                     continue;
                 }
-                if (ticket.status == RealityExcursionStatus.Completed)
+                if (RealityRetentionPolicy.IsTerminalExcursion(ticket))
                 {
                     repaired.Add(ticket);
                     continue;

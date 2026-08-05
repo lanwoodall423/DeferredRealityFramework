@@ -37,6 +37,18 @@
         <member name="M:DeferredReality.API.RealityProviderContext.Random(System.String,System.Int64)">
             <summary>Creates a deterministic stream scoped to this provider and operation.</summary>
         </member>
+        <member name="M:DeferredReality.API.RealityProviderContext.DeclareExactlyOnceDomain(System.String,System.String,System.Boolean,System.String)">
+            <summary>Declares a provider/domain sequence boundary used for replay-safe marker retention.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityProviderContext.AdvanceExactlyOnceCursor(System.String,System.String,System.Int64,System.String)">
+            <summary>Advances a declared provider/domain cursor after its sequenced operation is durably committed.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityExactlyOnceDomain">
+            <summary>Provider declaration for a durable exactly-once sequence domain.</summary>
+        </member>
+        <member name="T:DeferredReality.API.IRealityExactlyOnceProvider">
+            <summary>Optional provider description for a sequence domain before it is persisted.</summary>
+        </member>
         <member name="T:DeferredReality.API.IRealityProvider">
             <summary>Public provider extension point. Providers may implement any capability interfaces below.</summary>
         </member>
@@ -361,11 +373,23 @@
         <member name="F:DeferredReality.API.RealityAppliedOperation.domainId">
             <summary>Optional provider-defined replay domain; null keeps the marker durable.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityAppliedOperation.sequence">
+            <summary>Provider/domain sequence. Negative means legacy operation-ID-only durability.</summary>
+        </member>
         <member name="M:DeferredReality.API.RealityAppliedOperation.ExposeData">
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.API.RealityOperationRetentionWatermark">
             <summary>Provider proof that exactly-once markers in one domain cannot legitimately replay before this tick.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityOperationRetentionWatermark.sequenceMode">
+            <summary>True only when this record declares a sequence replay boundary.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityOperationRetentionWatermark.sequenceCursor">
+            <summary>Highest durably accepted sequence in the provider/domain.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityOperationRetentionWatermark.allowGaps">
+            <summary>True permits deterministic out-of-order sequences; false requires cursor+1.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityConflictReport">
             <summary>Explicit conflict report retained for diagnostics and future resolution.</summary>
@@ -694,11 +718,20 @@
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.HasAppliedOperation(System.String)">
             <summary>Returns whether a mutation operation has already been applied.</summary>
         </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RecordAppliedOperation(System.String,System.String,System.String,System.Int64,System.String)">
-            <summary>Persists an exactly-once operation marker.</summary>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ValidateOperationSequence(System.String,System.String,System.String,System.Int64,System.String@)">
+            <summary>Returns whether a sequenced operation may be accepted before state mutation.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RecordAppliedOperation(System.String,System.String,System.String,System.Int64,System.String,System.Int64)">
+            <summary>Persists an exactly-once operation marker after sequence validation.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UpsertOperationRetentionWatermark(DeferredReality.API.RealityOperationRetentionWatermark)">
             <summary>Publishes provider proof that a replay domain has advanced past a durable tick.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.DeclareExactlyOnceDomain(System.String,System.String,System.String,System.Boolean,System.String)">
+            <summary>Declares a provider/domain sequence cursor. Legacy tick proofs are never upgraded implicitly.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.AdvanceExactlyOnceCursor(System.String,System.String,System.String,System.Int64,System.String)">
+            <summary>Advances a declared cursor only after its matching sequenced marker is durable.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.OperationWatermarkSnapshots(System.String)">
             <summary>Returns detached, deterministic provider replay-watermark records.</summary>
@@ -1006,6 +1039,9 @@
         <member name="M:DeferredReality.Simulation.RealityConstraintService.AreSemanticallyIncompatible(DeferredReality.API.RealityConstraint,DeferredReality.API.RealityConstraint)">
             <summary>Returns whether differing payloads describe incompatible facets in a shared domain.</summary>
         </member>
+        <member name="T:DeferredReality.Simulation.RealityExactlyOncePolicy">
+            <summary>Pure rules for provider/domain sequence acceptance and replay-safe advancement.</summary>
+        </member>
         <member name="T:DeferredReality.Simulation.RealityPopulationMutationResult">
             <summary>Result of an atomic aggregate population mutation.</summary>
         </member>
@@ -1018,22 +1054,22 @@
         <member name="M:DeferredReality.Simulation.RealityPopulationService.Register(DeferredReality.API.DeferredRealityWorldComponent,DeferredReality.API.RealityPopulationRecord)">
             <summary>Creates or updates one aggregate population.</summary>
         </member>
-        <member name="M:DeferredReality.Simulation.RealityPopulationService.Consume(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.String,System.Int64,System.String)">
+        <member name="M:DeferredReality.Simulation.RealityPopulationService.Consume(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.String,System.Int64,System.String,System.Int64)">
             <summary>Consumes an exact amount once. Replaying the same operation ID is a no-op duplicate.</summary>
         </member>
-        <member name="M:DeferredReality.Simulation.RealityPopulationService.Release(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.String,System.Int64,System.String)">
+        <member name="M:DeferredReality.Simulation.RealityPopulationService.Release(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.String,System.Int64,System.String,System.Int64)">
             <summary>Adds or releases an exact amount once.</summary>
         </member>
-        <member name="M:DeferredReality.Simulation.RealityPopulationService.ReproduceOrDie(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.Single,System.String,System.Int64,System.String)">
+        <member name="M:DeferredReality.Simulation.RealityPopulationService.ReproduceOrDie(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.Single,System.String,System.Int64,System.String,System.Int64)">
             <summary>Applies reproduction or mortality as one exactly-once aggregate operation.</summary>
         </member>
-        <member name="M:DeferredReality.Simulation.RealityPopulationService.Transfer(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.String,System.Single,System.String,System.Int64,System.String)">
+        <member name="M:DeferredReality.Simulation.RealityPopulationService.Transfer(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.String,System.Single,System.String,System.Int64,System.String,System.Int64)">
             <summary>Transfers an aggregate amount between connected populations atomically.</summary>
         </member>
         <member name="M:DeferredReality.Simulation.RealityPopulationService.RecordEstimate(DeferredReality.API.DeferredRealityWorldComponent,DeferredReality.API.RealityObservationInput)">
             <summary>Records a player or sensor estimate without changing objective amount.</summary>
         </member>
-        <member name="M:DeferredReality.Simulation.RealityPopulationService.ReconcileActiveMap(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.String,System.Int64,System.String)">
+        <member name="M:DeferredReality.Simulation.RealityPopulationService.ReconcileActiveMap(DeferredReality.API.DeferredRealityWorldComponent,System.String,System.Single,System.String,System.Int64,System.String,System.Int64)">
             <summary>Reconciles a provider's active-map change through an exactly-once aggregate delta.</summary>
         </member>
         <member name="T:DeferredReality.Simulation.RealityProcessControl">

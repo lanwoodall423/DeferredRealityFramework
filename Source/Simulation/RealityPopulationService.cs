@@ -33,28 +33,28 @@ namespace DeferredReality.Simulation
 
         /// <summary>Consumes an exact amount once. Replaying the same operation ID is a no-op duplicate.</summary>
         public static RealityPopulationMutationResult Consume(DeferredRealityWorldComponent world, string populationId,
-            float amount, string operationId, long now, string providerId = null)
+            float amount, string operationId, long now, string providerId = null, long sequence = -1)
         {
-            return Mutate(world, populationId, -Math.Abs(amount), operationId, now, providerId, "consume");
+            return Mutate(world, populationId, -Math.Abs(amount), operationId, now, providerId, "consume", sequence);
         }
 
         /// <summary>Adds or releases an exact amount once.</summary>
         public static RealityPopulationMutationResult Release(DeferredRealityWorldComponent world, string populationId,
-            float amount, string operationId, long now, string providerId = null)
+            float amount, string operationId, long now, string providerId = null, long sequence = -1)
         {
-            return Mutate(world, populationId, Math.Abs(amount), operationId, now, providerId, "release");
+            return Mutate(world, populationId, Math.Abs(amount), operationId, now, providerId, "release", sequence);
         }
 
         /// <summary>Applies reproduction or mortality as one exactly-once aggregate operation.</summary>
         public static RealityPopulationMutationResult ReproduceOrDie(DeferredRealityWorldComponent world, string populationId,
-            float births, float deaths, string operationId, long now, string providerId = null)
+            float births, float deaths, string operationId, long now, string providerId = null, long sequence = -1)
         {
-            return Mutate(world, populationId, births - deaths, operationId, now, providerId, "demography");
+            return Mutate(world, populationId, births - deaths, operationId, now, providerId, "demography", sequence);
         }
 
         /// <summary>Transfers an aggregate amount between connected populations atomically.</summary>
         public static RealityPopulationMutationResult Transfer(DeferredRealityWorldComponent world, string sourcePopulationId,
-            string destinationPopulationId, float amount, string operationId, long now, string providerId = null)
+            string destinationPopulationId, float amount, string operationId, long now, string providerId = null, long sequence = -1)
         {
             RealityThreadGuard.RequireMainThread();
             var result = new RealityPopulationMutationResult();
@@ -74,6 +74,13 @@ namespace DeferredReality.Simulation
                 return result;
             }
             if (!source.migrationAllowed || !destination.migrationAllowed) { result.error = "Population migration is disabled."; return result; }
+            string effectiveProvider = providerId ?? source.providerId;
+            string transferDomain = source.populationId + "->" + destination.populationId;
+            if (!world.ValidateOperationSequence(effectiveProvider, "transfer", transferDomain, sequence, out string sequenceError))
+            {
+                result.error = sequenceError;
+                return result;
+            }
             if (RealityProviderRegistry.TryGet(source.providerId, out IRealityProvider registered) && registered is IPopulationProvider populationProvider)
             {
                 var vetoes = new List<RealityVeto>();
@@ -100,22 +107,14 @@ namespace DeferredReality.Simulation
             source.extinct = source.amount <= 0f;
             destination.extinct = false;
             if (!world.UpsertPopulation(source) || !world.UpsertPopulation(destination) ||
-                !world.RecordAppliedOperation(operationId, providerId, "transfer", now,
-                    source.populationId + "->" + destination.populationId))
+                !world.RecordAppliedOperation(operationId, effectiveProvider, "transfer", now, transferDomain, sequence) ||
+                (sequence >= 0 && !world.AdvanceExactlyOnceCursor(effectiveProvider, "transfer", transferDomain, sequence,
+                    "population-transfer-sequence-committed:" + operationId)))
             {
                 world.RestoreState(state);
                 result.error = "Transfer transaction failed and was rolled back.";
                 return result;
             }
-            world.UpsertOperationRetentionWatermark(new RealityOperationRetentionWatermark
-            {
-                providerId = providerId,
-                kind = "transfer",
-                domainId = source.populationId + "->" + destination.populationId,
-                safeThroughTick = now,
-                proof = "population-transfer-state-committed:" + operationId,
-                updatedTick = now
-            });
             result.succeeded = true;
             result.before = source.amount + amount;
             result.after = source.amount;
@@ -130,13 +129,13 @@ namespace DeferredReality.Simulation
 
         /// <summary>Reconciles a provider's active-map change through an exactly-once aggregate delta.</summary>
         public static RealityPopulationMutationResult ReconcileActiveMap(DeferredRealityWorldComponent world, string populationId,
-            float delta, string operationId, long now, string providerId)
+            float delta, string operationId, long now, string providerId, long sequence = -1)
         {
-            return Mutate(world, populationId, delta, operationId, now, providerId, "active-map-reconcile");
+            return Mutate(world, populationId, delta, operationId, now, providerId, "active-map-reconcile", sequence);
         }
 
         private static RealityPopulationMutationResult Mutate(DeferredRealityWorldComponent world, string populationId,
-            float delta, string operationId, long now, string providerId, string kind)
+            float delta, string operationId, long now, string providerId, string kind, long sequence)
         {
             RealityThreadGuard.RequireMainThread();
             var result = new RealityPopulationMutationResult();
@@ -149,6 +148,11 @@ namespace DeferredReality.Simulation
             RealityPopulationRecord record = world.PopulationRecord(populationId)?.Clone();
             if (record == null) { result.error = "Population is missing."; return result; }
             string effectiveProvider = providerId ?? record.providerId;
+            if (!world.ValidateOperationSequence(effectiveProvider, kind, record.populationId, sequence, out string sequenceError))
+            {
+                result.error = sequenceError;
+                return result;
+            }
             if (RealityProviderRegistry.TryGet(record.providerId, out IRealityProvider registered) && registered is IPopulationProvider populationProvider)
             {
                 var vetoes = new List<RealityVeto>();
@@ -170,21 +174,13 @@ namespace DeferredReality.Simulation
             record.lastUpdateTick = now;
             RealityWorldState state = world.CaptureState();
             if (!world.UpsertPopulation(record) || !world.RecordAppliedOperation(operationId, effectiveProvider, kind, now,
-                record.populationId))
+                record.populationId, sequence) || (sequence >= 0 && !world.AdvanceExactlyOnceCursor(effectiveProvider, kind,
+                    record.populationId, sequence, "population-sequence-committed:" + operationId)))
             {
                 world.RestoreState(state);
                 result.error = "Population mutation failed and was rolled back.";
                 return result;
             }
-            world.UpsertOperationRetentionWatermark(new RealityOperationRetentionWatermark
-            {
-                providerId = effectiveProvider,
-                kind = kind,
-                domainId = record.populationId,
-                safeThroughTick = now,
-                proof = "population-state-committed:" + operationId,
-                updatedTick = now
-            });
             if (kind == "active-map-reconcile" && RealityProviderRegistry.TryGet(record.providerId, out IRealityProvider owner) &&
                 owner is IPopulationProvider activeMapProvider)
             {

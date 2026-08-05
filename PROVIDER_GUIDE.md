@@ -76,21 +76,29 @@ migration marker is committed.
 ## Retention
 
 Exactly-once operation IDs must remain durable unless replay is impossible by
-contract. To opt into compaction, set a positive `operationRetentionTicks` and
-list each safe `compactableOperationKinds`; unlisted kinds remain durable.
+contract. To opt into compaction, declare an `IRealityExactlyOnceProvider` domain
+or call `RealityProviderContext.DeclareExactlyOnceDomain`, then advance its
+persisted cursor with `AdvanceExactlyOnceCursor` only after the state and marker
+commit. Set a positive `operationRetentionTicks` and list each safe
+`compactableOperationKinds`; unlisted kinds remain durable. Strict domains require
+contiguous sequences, while gap-tolerant domains still reject every sequence at or
+below the cursor. Legacy operation-ID-only markers and old tick-only watermarks
+remain durable.
 Cancelled process records use the separate `cancelledProcessRetentionTicks`
 opt-in and are removed only when no persisted reference exists. The framework
 retains interrupted transfer journals, caps terminal journals deterministically,
 and never removes a map alias while a live map or recovery record can still refer
-to it. The bundled providers opt in only for their stable non-replayable event
-domains.
+to it. Providers may opt in only for stable non-replayable event domains with a
+durable replay boundary.
 
 ## Population rules
 
 Use `RealityPopulationService` for consume, release, reproduction, mortality,
-transfer, and active-map reconciliation. Pass a stable operation ID. A repeated
-operation is reported as a duplicate and does not change the amount. Objective
-amount and observation estimates are separate records.
+transfer, and active-map reconciliation. Pass a stable operation ID and, for a
+declared exactly-once domain, a provider sequence. The framework validates the
+sequence before mutating population state; a repeated operation or sequence is
+reported as a duplicate and does not change the amount. Objective amount and
+observation estimates are separate records.
 
 ## Transitions
 
@@ -135,8 +143,8 @@ Adjacent materialization must set `RealityMaterializationRequest.adjacentMap` wi
 an explicit owner/provider, origin region, origin map ID, and creation tick. Do not infer
 the role from `reason` text or from a map merely being non-home. A custom map
 parent should implement `IRealityMapIdentityProvider` and return a stable claim
-containing its layer/custom/instance/provider identity; `WildlifeDeferredMapParent`
-uses its persisted region ID.
+containing its layer/custom/instance/provider identity; the provider-owned map
+parent or map component supplies that identity from its own persisted state.
 
 Use the public world lease API to `BeginExcursion`/`AttachExcursion`, call
 `HeartbeatExcursion` while a provider task is meaningful, and call

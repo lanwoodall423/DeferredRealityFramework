@@ -14,7 +14,7 @@
     "version": "1.0.0",
     "restore": {
       "projectUniqueName": "C:\\Games\\Steam\\steamapps\\common\\RimWorld\\Mods\\DeferredRealityFramework\\DevTools\\BridgeAdapter\\DeferredRealityFramework.BridgeAdapter.csproj",
-      "projectName": "DeferredRealityFramework.BridgeAdapter",
+      "projectName": "DeferredRealityFramework.BridgeAdapter.typed-v3",
       "projectPath": "C:\\Games\\Steam\\steamapps\\common\\RimWorld\\Mods\\DeferredRealityFramework\\DevTools\\BridgeAdapter\\DeferredRealityFramework.BridgeAdapter.csproj",
       "packagesPath": "C:\\Users\\Lan\\.nuget\\packages\\",
       "outputPath": "C:\\Games\\Steam\\steamapps\\common\\RimWorld\\Mods\\DeferredRealityFramework\\DevTools\\BridgeAdapter\\obj\\",

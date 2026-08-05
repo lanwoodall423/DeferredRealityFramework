@@ -27,7 +27,7 @@ namespace DeferredReality.Materialization
         public static bool IsReturnDue(RealityExcursionTicket ticket, long now, bool taskCompleted,
             bool safelyIdle, bool unsafeState, bool providerTaskActive)
         {
-            if (ticket == null || ticket.status == RealityExcursionStatus.Completed ||
+            if (ticket == null || RealityRetentionPolicy.IsTerminalExcursion(ticket) ||
                 ticket.status == RealityExcursionStatus.Quarantined || ticket.retryTick > now) return false;
             if (taskCompleted) return !unsafeState;
             if (ticket.status == RealityExcursionStatus.ReturnRequested || ticket.status == RealityExcursionStatus.Cancelled)
@@ -66,7 +66,7 @@ namespace DeferredReality.Materialization
         public static bool HasActiveLease(IEnumerable<RealityExcursionTicket> tickets, int mapUniqueId)
         {
             return (tickets ?? Enumerable.Empty<RealityExcursionTicket>()).Any(ticket => ticket != null &&
-                ticket.status != RealityExcursionStatus.Completed &&
+                !RealityRetentionPolicy.IsTerminalExcursion(ticket) &&
                 (ticket.originMapUniqueId == mapUniqueId || ticket.destinationMapUniqueId == mapUniqueId));
         }
 

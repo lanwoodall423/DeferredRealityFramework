@@ -1,227 +1,140 @@
 # Deferred Reality Framework
 
-## Inspection and ownership baseline
+## Ownership boundary
 
-This document records the ownership boundary inspected before framework code is
-introduced. The framework is an independent RimWorld 1.6 mod and has no compile
-time dependency on Wildlife, AquacultureFishing, Horticulture, or Knowledge
-Framework.
+Deferred Reality Framework is a provider-neutral RimWorld 1.6 framework. It has
+no compile-time or runtime knowledge of any consuming gameplay mod. Providers
+remain authoritative for their map components, Defs, jobs, Lords, exact
+Pawns/Things, gameplay AI, and legacy save keys. The framework owns only generic
+regional state, aggregate populations, anchors, constraints, analytical
+processes, observations, provider payload envelopes, transfer journals,
+adjacent-site records, excursion tickets, and migration/retention metadata.
 
-### Existing authoritative state
+Provider integrations belong in consuming mods. They register stable
+`IRealityProvider` implementations and may translate their own legacy state into
+the generic APIs. A provider may be absent; its opaque records remain inspectable,
+processes become `ProviderUnavailable`, and no framework fallback invents provider
+gameplay or reconstructs provider-owned objects.
 
-| System | Current owner | Durable keys or identity | First migration boundary |
-| --- | --- | --- | --- |
-| Wildlife regional ecology | `RegionalWildlifeMapComponent` | `RegionalSpeciesRecord`, roaming records, habitat and seasonal fields | Import regional populations and roaming summaries into stable region records; leave legacy records readable until the import is committed |
-| Wildlife herds and packs | `HerdMapComponent`, `PackMapComponent` | hidden pawns, `PackRecord`, herd and pack IDs | Remain active-map owners for v1; only regional/off-map summaries move first |
-| Wildlife notable animals | notable/lives/field-journal map components | animal load IDs and existing journal identities | Import observed identity-bearing animals as framework anchors; never compress an unsafe live pawn |
-| Wildlife expeditions | `HuntingExpeditionMapComponent` and related components | expedition IDs, world tiles, specialists, history and trail paths | Preserve expedition records; add destination region references without changing active expedition behavior |
-| Wildlife presentation | ecology snapshots, event router, narrative, mystery, signal, landscape and UI components | runtime snapshots and bounded event history | Read framework snapshots when available; do not make UI components authoritative |
-| Aquaculture natural water | `NaturalFishPopulationMapComponent` | `aquacultureNaturalFishPopulations`, water anchor/cell identity, fish `defName` | Convert each water body to a stable water-body population subject; retain the legacy component for rollback and old-save conversion |
-| Aquaculture constructed ponds | `FishPondMapComponent`, `PondEcologyRecord`, `CompFishTraits` | `aquacultureDataVersion`, `pondEcology`, individual fish components | No ownership change in v1 |
-| Aquaculture journal and progression | `AquacultureJournalComponent`, progression components | `aquacultureSpeciesJournal`, `aquacultureBreeds`, fishing attempts/progression | Remain authoritative; framework observations are inputs, not a second journal |
-| Horticulture cultivars | `GameComponent_NovelSeeds`, `VarietyRecord` | unlocked varieties, IDs, lineage, palettes, grower selections | No ownership change in v1; framework stores only regional wild presence and references |
-| Horticulture active plants and produce | plant comps and produce inheritance components | cultivar/trait IDs, packed colors, inherited produce state | No ownership change in v1 |
-| Knowledge | Knowledge Framework persistence and each mod's adapter | domain, subject, context and migration IDs | Framework emits read-only observations; optional adapters translate them into Knowledge claims |
+## Stable state
 
-### Known save-format constraints
+`DeferredRealityWorldComponent` is the durable owner of latent framework state.
+`RealityRegionId` identifies represented latent state by tile, layer, local
+slot/instance, parent, and provider namespace. `Map.uniqueID` is only an active
+projection link or migration alias and is never the identity of latent state.
 
-The following identifiers are compatibility boundaries and must not be renamed:
+Providers may own an adjacent site representing a region in another namespace,
+including a shared `core` surface region. The owner is persisted separately from
+the represented region and must be registered and explicitly claimed; the
+framework never rewrites a region namespace to match an owner.
 
-- Wildlife class names, Scribe keys, Def names, and its legacy Knowledge
-  migration marker.
-- Aquaculture keys `aquacultureNaturalFishPopulations`, `aquacultureDataVersion`,
-  `pondEcology`, `aquacultureSpeciesJournal`, and `aquacultureBreeds`.
-- Horticulture cultivar IDs, generated trait Def names, packed palette values,
-  and the existing `GameComponent_NovelSeeds` fields.
-- Knowledge domain and subject IDs, including existing map-context strings while
-  they are being migrated.
+## Scheduling and determinism
 
-Existing components may be absent, contain null Def references, contain duplicate
-IDs, or refer to a removed integration mod. Conversion therefore treats every
-legacy record as untrusted input: validate, quarantine invalid records, preserve
-unknown payloads, and commit a per-provider migration marker only after the new
-records validate.
+The world tick uses a runtime earliest-due gate. When no process is due it does
+not clone or sort the process collection. Due work is ordered by due tick,
+descending priority, provider ID, and process ID. Providers receive continuous
+`elapsedTicks`; analytical steps are
+`max(1, floor(elapsedTicks / intervalTicks))`, bounded by the run budget.
 
-## Framework ownership
+Seeds, ordering, duplicate repair, retention selection, audit keys, and eviction
+ties use stable ordinal identities and do not depend on dictionary enumeration.
 
-`DeferredRealityWorldComponent` is the sole owner of latent framework state. It
-stores region descriptors, topology, fidelity, timestamps, deterministic seeds,
-anchors, aggregate populations, constraints, scheduled processes, observations,
-environment summaries, provider payloads, schema versions, and transition
-journals. A MapComponent can be a projection or reconciliation cache, but cannot
-be the only durable source for an unloaded region.
+## Provider lifecycle
 
-Stable region identity is composed of world tile, layer, local slot/instance,
-parent region, and provider namespace. `Map.uniqueID` is retained only as a
-temporary active-map link and legacy migration input. It is never used as the
-identity of latent state.
+Provider exceptions are isolated. Manual, provider-failure, and provider-requested
+pauses require explicit resume. Missing providers suspend processes with
+`ProviderUnavailable`; registering that same provider reactivates only those
+processes and preserves payload, execution count, RNG epoch, and overdue timing.
 
-The first implementation is deliberately conservative:
+Materialization plans are transactional. A provider is tracked before `Prepare`
+starts because preparation may partially mutate state and throw. Prepared and
+stage-aware providers, transactional anchors, framework state, map-creation
+intents, and genuinely created maps compensate in deterministic reverse order.
+Framework state is restored after provider rollback and created maps are removed
+last. The original error remains primary; rollback failures are retained in the
+result and diagnostics. Rollback is idempotent and tolerates missing temporary
+state.
 
-- active maps continue to run ordinary RimWorld systems;
-- no unloaded Map is ticked;
-- generic pawn and Thing compression is vetoed;
-- constructed ponds, colony cultivars, active Wildlife AI, jobs, Lords,
-  reservations, combat, and quests remain with their current owners;
-- provider payloads are versioned opaque records, not arbitrary Scribe/object
-  resurrection;
-- materialization and compression use prepare/validate/commit or rollback;
-- all analytical simulation uses stable seeded streams and bounded catch-up;
-- the world tick uses a runtime earliest-due gate, so a steady-state tick with no
-  due process does not clone or sort the process collection;
-- due work is ordered by due tick, descending priority, provider ID, and process
-  ID. The provider receives the continuous `elapsedTicks` interval, while
-  analytical steps are `max(1, floor(elapsedTicks / intervalTicks))`, bounded by
-  the run budget.
+Compression selects one explicit owner-scoped provider list and uses that exact
+list for `CanCompress`, `Prepare`, `Validate`, `Commit`, and reverse rollback.
+Unowned or ambiguous compression fails closed. A provider may also compensate a
+committed compression when an outer map-factory removal fails.
 
-After preparation begins, materialization compensates only providers that
-prepared successfully, in reverse provider order. Framework state is restored
-after provider rollback and a newly created map is removed last; original and
-compensation failures are both reported. Transactional anchors use
-prepare/apply/validate/rollback and commit cleanup. Legacy
-`IAnchorProvider.OnAnchorMaterialized` remains a final, idempotent notification
-and is never called before validation.
+## Map identity and readiness
 
-The process pause cause is persisted separately from the paused flag. Manual,
-provider-failure, and provider-requested pauses remain paused until an explicit
-resume. A missing provider creates a `ProviderUnavailable` suspension; registering
-that same provider reactivates only those suspensions and preserves payload,
-execution count, deterministic RNG epoch, and overdue timing.
+Nonstandard maps require a provider-supplied `IRealityMapIdentityProvider` claim
+with a stable layer/custom/instance identity. Standard `Surface(tile)` fallback is
+limited to an unambiguous standard surface map. Persisted aliases win during
+migration; a second live map or conflicting claim is quarantined and cannot
+overwrite an active projection.
 
-The world component performs conservative retention. Audit records are
-deduplicated and capped, observations evict the linear oldest record, terminal
-transfer journals use a 600000-tick/256-record policy while interrupted journals
-remain recoverable, and exactly-once markers without provider-declared expiry
-remain durable. Cancelled processes and legacy map aliases are compacted only
-after provider/reference checks prove recovery is unaffected.
+Map generation creates a save-safe, transaction-scoped intent before the provider
+factory runs. The intent records transaction, expected region, owner, origin,
+pre-existing map, and created map identities. It is the only authorization to
+classify a newly generated map as an adjacent site. `Map.FinalizeInit` and any
+provider map-component callback converge through the same idempotent registration
+path. Stale, conflicting, unbound, or ordinary-map intents fail closed and are
+reconciled after load. Successful commit and completed rollback clear the intent.
 
-RimWorld may invoke `Map.FinalizeInit` and map component initialization from a
-`LongEventHandler` worker thread. Framework map registration, de-registration,
-and adapter migrations therefore pass through `RealityMapLifecycle`; worker
-callbacks are deferred with `LongEventHandler.ExecuteWhenFinished` before any
-framework-owned or provider-owned mutable state is touched.
+Map readiness is registered through one effective lifecycle path. Worker callbacks
+defer through `LongEventHandler` before mutable framework state is touched.
+`RealityThreadGuard` is unknown until the explicit RimWorld startup lifecycle
+establishes the main-thread ID; mutating calls do not self-initialize.
 
-`RealityThreadGuard` starts unknown. Only the explicit `StaticConstructorOnStartup`
-framework lifecycle establishes the main-thread ID; mutating calls fail rather
-than adopting the first arbitrary caller, and provider registration from an
-unknown/worker callback is deferred through RimWorld's lifecycle bridge.
+## Constraints and persistence
 
-Map identity is claim-based for nonstandard maps. A provider must claim pocket,
-interior, underground, vehicle, ship, or other custom maps with a stable region
-identity. Automatic `Surface(tile)` mapping is limited to an unambiguous standard
-surface map. Persisted aliases win during migration; a second live map or
-conflicting provider claims are quarantined and left unclaimed rather than
-overwriting `activeMapUniqueId`. The Harmony map-finalization postfix is the sole
-map readiness path.
+Constraint conflicts require intersecting explicit domain keys and incompatible
+semantics. Legacy constraints use provider/type plus subject, facet, or region,
+never subject alone. Duplicate repair keeps the first serialized valid slot unless
+a higher schema version or explicit newer update tick proves a later record newer.
 
-Region identity and adjacent ownership are intentionally separate. `RealityRegionId`
-describes the represented region, including its namespace; an adjacent marker's
-`providerId` names the integration responsible for the temporary site, transfer
-host, construction policy, and eviction. A shared `core` surface region can
-therefore be a Wildlife-owned adjacent site without rewriting its region ID.
+Root save schema 5 adds adjacent diagnostics, operation watermarks, task/terminal
+fields, and map-creation intents with empty/-1 defaults for older saves. Unknown
+provider payloads and missing-provider records remain durable and inspectable.
 
-Materialization creates a save-safe, transaction-scoped map-creation intent before
-the host factory starts generation. It records the expected region, owner, origin,
-transaction, pre-existing tile map, and returned map ID. Every map registration
-caller, including provider map components and the single `Map.FinalizeInit`
-postfix, uses the same intent-aware registration path. Only a map with a matching
-provider identity claim and newly-created identity can be classified; persisted
-aliases, live-map collisions, stale intents, and conflicting intents fail closed.
-The intent is cleared on commit, rollback, and load repair, while unresolved
-creation records remain inspectable and prevent ordinary projection assumptions.
+Exactly-once marker expiry requires a provider/domain replay boundary. The
+framework uses persisted provider/kind/domain sequence watermarks only when the
+provider has declared a proof that operations at or below the cursor cannot be
+accepted again. Age, aggregate population values, or a legacy operation ID alone
+never authorize deletion. Writes mark dirty storage maintenance rather than
+running broad compaction on every mutation; save and post-load repair force a
+bounded deterministic pass.
 
-Constraint conflicts use explicit `conflictDomainKeys` and `conflictFacetKeys`.
-Only intersecting domains with incompatible semantics conflict. Legacy records
-fall back to provider/type plus affected subject, facet, or region, never subject
-alone. Duplicate repair keeps the first serialized valid slot, replacing its
-value only when a higher schema version or explicit newer update tick proves the
-later record newer.
+## Adjacent sites and excursions
 
-## Migration sequence
+An adjacent marker is a typed temporary-site role applied after map generation.
+Construction designators, blueprint placement/spawn/replacement, and frame
+completion are rejected on marked maps while generation and deconstruction remain
+available. The rejection path is provider-neutral and ordinary maps are
+unaffected.
 
-1. Create or resolve a stable region for each active map and record the legacy map
-   ID in a migration alias table.
-2. Validate and import Wildlife regional species and roaming summaries. Population
-   subjects use `RealityRegionId`, not `Map.uniqueID`; observed animals become
-   anchors only when their existing identity is reliable.
-3. Import Aquaculture natural-water records using a stable water-body identity
-   derived from region and topology. Do not merge constructed ponds or unrelated
-   water bodies solely because they share a map.
-4. Import Horticulture wild regional presence and variety references only. Do not
-   move unlocked cultivar ownership or active plants.
-5. Emit optional Knowledge observations and preserve existing Knowledge records;
-   only remove or rewrite a legacy relation after its replacement is committed.
-6. Mark each provider migration version as committed. Keep legacy fields and
-   conversion aliases for at least one successful save cycle so interrupted loads
-   can retry without loss.
+An outbound ticket is written only after a transfer host verifies the same Pawn
+instance on the declared destination. It records the exact origin map/cell,
+inverse edge, provider task ID, outbound/return journals, heartbeat, grace,
+retry, and terminal state. Only one nonterminal ticket may own a Pawn load ID.
+Completion requires the same instance on the exact origin map. Unsafe combat,
+medical, sleep, carrying, mental, drafted, forced, provider-task, transfer, and
+ambiguous ownership states defer return with backoff; missing origins/providers
+retain the Pawn, map, journal, and ticket for recovery.
 
-The migration is idempotent. Duplicate stable IDs are repaired deterministically
-and reported. Missing Defs remain as unresolved provider payload references rather
-than being silently deleted. A provider exception vetoes that provider's cleanup
-but does not make the framework save unloadable.
+Providers may expose task observation, explicit heartbeat/completion/abandon hooks,
+and terminal runtime cleanup. Fresh bounded evidence may renew a lease; unchanged
+or absent evidence cannot renew indefinitely. Once a lease expires, only the
+provider-neutral safe-idle fallback may request return.
 
-## Current phase boundary
+Monitoring is coarse and gated by active maps, nonterminal/recoverable tickets,
+pending intents, or unresolved journals. Historical completed tickets alone do
+not keep the monitor running. Background inspection reconstructs persisted access
+ticks but does not refresh LRU recency. Meaningful creation, transfer, heartbeat,
+return, provider access, or explicit map retrieval touches recency.
 
-The framework core, provider-scoped map factories, Wildlife regional population
-import, roaming anchors, analytical cardinal migration, active-map reconciliation,
-and opt-in adjacent transfer/materialization path are implemented. Wildlife still
-owns active herds, exact pawns, jobs, Lords, memories, and map AI; the framework
-owns only the canonical aggregate and identity projections. No legacy owner is
-removed until its replacement has passed validation and a committed migration
-marker exists. Frontier and other adapters remain provider-scoped and do not
-share Wildlife state.
+Warm eviction is real removal, never dropping a dictionary reference. It requires
+no active/recoverable ticket, player-owned or unsafe object, construction artifact,
+interrupted journal, viewed-map conflict, or provider veto; then provider
+compression and the owning `IRealityMapFactory.RemoveMap` must succeed and the map
+must disappear from `Find.Maps`. Terminal excursions, retired markers, and
+resolved diagnostics use deterministic age/cap retention, while recovery
+references override compaction.
 
-## Adjacent excursion boundary
-
-An adjacent map is an explicit, typed temporary-site role. Its marker records the
-separate owner/provider and stable represented region, origin region/map,
-creation/access ticks, transaction identity, and lifecycle;
-it is applied after map generation so ordinary generation is not constrained by
-the construction policy. `WildlifeDeferredMapParent` supplies the provider-scoped
-region identity used by map claims. Marked maps are hard non-buildable work sites:
-build/install designators, blueprint placement, blueprint replacement, frame
-completion, and post-readiness artifact cleanup are guarded, while generation and
-deconstruction remain available.
-
-An excursion ticket is written only after a committed outbound transfer verifies
-the same Pawn instance on the destination map. It retains exact origin and inverse
-return-edge data, outbound/return journal IDs, heartbeat and lease deadlines, and
-retry/diagnostic state. The coarse monitor checks only marked maps and ticketed
-Pawns. Explicit completion, an expired lease with a meaningful-task-free Pawn, or
-an idle fallback can request return; combat, drafting, mental/medical/sleep states,
-carrying, player-forced jobs, provider jobs, and unresolved ownership always defer
-with backoff. Return uses the provider's reverse transfer and completes only after
-the same Pawn is on the exact origin map. Save/load reconciliation uses transfer
-journals and quarantine rather than reconstructing or guessing ownership.
-
-Warm adjacent maps are evicted by last access, never by dropping a dictionary
-reference. Eviction requires no active excursion, player pawn/prisoner/corpse/
-carried pawn/item, or interrupted recovery record, then successful provider
-compression and registered factory removal. Viewed maps and every veto remain
-diagnostically visible. Adjacent behavior remains behind the opt-in feature flag
-until the provider and in-game acceptance suite passes.
-
-Excursion ownership is also unique by Pawn load ID while a ticket is nonterminal.
-After load, a completed return journal finalizes an existing Returning ticket only
-when the exact Pawn is already on its recorded origin map. Provider removal retains
-the live map and ticket until the same scoped transfer host is registered again.
-Warm eviction is not a general-purpose map cache: dropping a reference is never
-eviction, and the adjacent feature remains experimental until the live acceptance
-suite passes.
-
-Applied-operation and transfer-journal writes only mark storage maintenance dirty.
-The world runs a deterministic coarse pass at the maintenance deadline or mutation
-threshold, while save and post-load repair force the pass. Exactly-once expiry
-requires a provider/kind/domain watermark proving replay is impossible; age and
-retention metadata alone never remove recurring demography, transfer, consume,
-release, or active-map-reconcile markers. Terminal excursions, retired markers,
-and resolved diagnostics use documented age/cap policies and preserve recovery
-references. Diagnostics expose active versus historical tickets, task heartbeats,
-maintenance state, watermark proofs, access ticks, compaction totals, and recent
-partial-prepare rollback failures.
-
-Wildlife has no reliable Herds completion callback. Its task provider therefore
-offers explicit heartbeat/completion/abandon hooks and emits bounded fresh evidence
-from observable trail/Pawn state. Repeated unchanged observations cannot renew a
-lease indefinitely; after the lease expires, only the existing conservative
-safe-idle fallback may request return.
+The adjacent feature flag remains disabled by default and experimental until the
+consumer-provider integration and live RimWorld acceptance checklist pass.

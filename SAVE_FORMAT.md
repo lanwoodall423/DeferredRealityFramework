@@ -16,7 +16,9 @@ The root schema key is `deferredRealitySaveSchema`; the current root schema is
 - `deferredRealityProviderPayloads`: explicitly opaque, versioned provider blobs.
 - `deferredRealityMapAliases`: legacy `Map.uniqueID` to stable region aliases.
 - `deferredRealityMigrations`: idempotent provider migration markers.
-- `deferredRealityAppliedOperations`: exactly-once mutation IDs.
+- `deferredRealityAppliedOperations`: exactly-once mutation IDs with optional
+  provider/domain sequence values. A negative sequence is a legacy operation-ID-only
+  marker and is never made compactable by migration.
 - `deferredRealityConflicts`: explicit incompatible-fact reports.
 - `deferredRealityQuarantine`: invalid, missing-Def, missing-provider, or duplicate records.
 - `deferredRealityTransferJournals`: save-safe adjacent transfer transactions.
@@ -26,8 +28,9 @@ The root schema key is `deferredRealitySaveSchema`; the current root schema is
   newly generated adjacent map to become a marked site.
 - `deferredRealityAdjacentDiagnostics`: bounded adjacent monitor and eviction
   diagnostics, including resolved history.
-- `deferredRealityOperationWatermarks`: provider/domain proofs that exactly-once
-  markers are past a replay-safe boundary.
+- `deferredRealityOperationWatermarks`: provider/domain sequence cursors and proofs
+  that markers at or below a durable replay boundary are safe to compact. Sequence
+  domains persist `sequenceCursor`, `allowGaps`, and a nonempty proof.
 
 Process records added in root schema 2 contain `pauseReason` and `cancelledTick`.
 Missing fields from older saves default to `None` and `-1`. A paused legacy
@@ -42,7 +45,7 @@ layer, local slot, instance, parent, and provider namespace.
 An adjacent marker's `regionId` identifies the represented region and retains its
 own namespace, commonly `core` for `Surface(tile)`. Its `providerId` separately
 identifies the integration that owns the temporary site and its lifecycle. A
-Wildlife-owned adjacent site may therefore represent a `core` surface region;
+provider-owned adjacent site may therefore represent a `core` surface region;
 old markers missing the newer transaction field remain valid without namespace
 rewriting.
 
@@ -77,12 +80,16 @@ Storage compaction is conservative and deterministic. Observation history is
 bounded at 8192 records, quarantine at 4096 unique records, and conflicts at
 2048 unique reports. Terminal transfer journals are retained for 600000 ticks
 and capped at 256 newest terminal records; interrupted journals are always
-retained. Exactly-once operation markers remain durable unless the provider
-declares a positive retention window and explicitly lists the operation kind.
-Even then, a marker is removed only when its nonempty domain has a matching
-persisted watermark proving replay is impossible through at least the marker
-tick. Age alone is never sufficient; recurring demography, transfer, consume,
-release, and active-map-reconcile markers without that proof remain durable.
+retained. Exactly-once operation markers remain durable unless the provider declares
+a positive retention window, explicitly lists the operation kind, and declares a
+sequence domain. A strict domain accepts only `cursor + 1`; a gap-tolerant domain
+accepts a greater sequence but still rejects every sequence at or below the cursor.
+The operation is validated against that cursor before population mutation, and the
+cursor advances only after the marker and state commit. A marker is removed only
+when its sequence is at or below a persisted cursor with a nonempty proof and the
+retention age has elapsed. Age, aggregate population values, legacy operation IDs,
+and old tick-only watermarks are never replay-safety proof. Providers without a
+proven sequence boundary retain markers indefinitely.
 Terminal excursions are retained for 600000 ticks with a deterministic 1024-record
 cap, retired adjacent markers for 600000 ticks with a 256-record cap, and resolved
 adjacent diagnostics for 600000 ticks with a 2048-record cap. Active, returning,
@@ -124,9 +131,9 @@ eviction is recency ordered and requires returned Pawns, no player
 or recovery references, successful provider compression, and a real registered map
 factory removal.
 
-Legacy Wildlife, Aquaculture, and Horticulture keys remain owned by their original
-assemblies. Their Deferred Reality adapters import into new records and do not
-rewrite or delete the legacy collections.
+Legacy provider keys remain owned by their original assemblies. A consuming
+provider adapter may import them into new records, but the framework does not
+rewrite or delete provider-owned collections.
 
 Map aliases are authoritative migration records. A live map with no persisted
 alias is automatically assigned `Surface(tile)` only when it is an unambiguous

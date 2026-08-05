@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "packageId": "lan.deferredreality.framework",
+  "adapterDirectory": "DevTools/BridgeAdapters",
+  "adapterSource": "DevTools/BridgeAdapter/DeferredRealityBridgeAdapter.cs",
+  "buildEntrypoint": "DevTools/Build-BridgeAdapter.ps1",
+  "validateEntrypoint": "DevTools/Test-BridgeAdapter.ps1",
+  "runtimeGuide": "DevTools/DEVBRIDGE_AGENT.md"
+}

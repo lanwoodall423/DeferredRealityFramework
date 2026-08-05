@@ -577,9 +577,11 @@ namespace DeferredReality.API
         public string providerId;
         /// <summary>Optional provider-defined replay domain; null keeps the marker durable.</summary>
         public string domainId;
+        /// <summary>Provider/domain sequence. Negative means legacy operation-ID-only durability.</summary>
+        public long sequence = -1;
         public long tick;
         public string kind;
-        public int schemaVersion = 1;
+        public int schemaVersion = 2;
 
         /// <inheritdoc />
         public void ExposeData()
@@ -587,6 +589,7 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref operationId, "operationId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref domainId, "domainId");
+            Scribe_Values.Look(ref sequence, "sequence", -1);
             Scribe_Values.Look(ref tick, "tick");
             Scribe_Values.Look(ref kind, "kind");
             Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
@@ -598,10 +601,16 @@ namespace DeferredReality.API
     /// <summary>Provider proof that exactly-once markers in one domain cannot legitimately replay before this tick.</summary>
     public sealed class RealityOperationRetentionWatermark : IExposable
     {
-        public int schemaVersion = 1;
+        public int schemaVersion = 2;
         public string providerId;
         public string kind;
         public string domainId;
+        /// <summary>True only when this record declares a sequence replay boundary.</summary>
+        public bool sequenceMode;
+        /// <summary>Highest durably accepted sequence in the provider/domain.</summary>
+        public long sequenceCursor = -1;
+        /// <summary>True permits deterministic out-of-order sequences; false requires cursor+1.</summary>
+        public bool allowGaps;
         public long safeThroughTick = -1;
         public long updatedTick;
         public string proof;
@@ -612,6 +621,9 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref kind, "kind");
             Scribe_Values.Look(ref domainId, "domainId");
+            Scribe_Values.Look(ref sequenceMode, "sequenceMode", false);
+            Scribe_Values.Look(ref sequenceCursor, "sequenceCursor", -1);
+            Scribe_Values.Look(ref allowGaps, "allowGaps", false);
             Scribe_Values.Look(ref safeThroughTick, "safeThroughTick", -1);
             Scribe_Values.Look(ref updatedTick, "updatedTick");
             Scribe_Values.Look(ref proof, "proof");
