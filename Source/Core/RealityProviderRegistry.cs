@@ -26,6 +26,14 @@ namespace DeferredReality.API
             }
             RealityProviderRegistration registration = provider.Registration;
             registration.providerId = registration.providerId.Trim();
+            if (ProvidersById.TryGetValue(registration.providerId, out IRealityProvider existing) && existing != null &&
+                existing.GetType() != provider.GetType())
+            {
+                Log.Error("[DeferredReality] Provider ID " + registration.providerId +
+                    " was already registered by " + existing.GetType().FullName +
+                    "; refusing a conflicting provider installation " + provider.GetType().FullName + ".");
+                return false;
+            }
             registration.dependencies = Normalize(registration.dependencies);
             registration.orderingBefore = Normalize(registration.orderingBefore);
             registration.orderingAfter = Normalize(registration.orderingAfter);

@@ -895,6 +895,9 @@
         <member name="T:DeferredReality.Materialization.RealityAdjacentConstructionGuards">
             <summary>Central construction predicate and defense-in-depth cleanup for marked adjacent maps.</summary>
         </member>
+        <member name="M:DeferredReality.Materialization.RealityAdjacentConstructionGuards.IsBlocked(Verse.Map)">
+            <summary>Returns whether the framework construction policy blocks player construction on this map.</summary>
+        </member>
         <member name="T:DeferredReality.Materialization.RealityAdjacentPolicy">
             <summary>Pure bounded-excursion and warm-cache decisions used by the live RimWorld bridge.</summary>
         </member>

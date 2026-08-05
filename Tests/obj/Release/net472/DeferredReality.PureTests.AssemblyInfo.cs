@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("DeferredReality.PureTests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f13919d5b8ebb7a23227d74ac60afece2b960adb")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e3d4cbb6bd67ef7738f3c293a74069222f77df88")]
 [assembly: System.Reflection.AssemblyProductAttribute("DeferredReality.PureTests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("DeferredReality.PureTests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

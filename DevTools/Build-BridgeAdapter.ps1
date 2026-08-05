@@ -15,7 +15,7 @@ dotnet build $project -c Release "-p:AssemblyName=$assemblyName" "-p:OutputPath=
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $assembly = Join-Path $build ($assemblyName + '.dll')
 if (-not (Test-Path -LiteralPath $publisher -PathType Leaf)) { throw "Bridge adapter publisher not found: $publisher" }
-& $publisher -AssemblyPath $assembly -Destination $destination -AdapterId 'lan.deferredreality.framework' -DisplayName 'Deferred Reality Framework' -Version '1' -Generation $Generation -ProviderType 'DeferredReality.BridgeAdapter.DeferredRealityBridgeAdapterProvider' -ExecutionContract 'cooperative-v1' -CommandSpecs @(
+& $publisher -AssemblyPath $assembly -Destination $destination -AdapterId 'lan.deferredreality.framework' -DisplayName 'Deferred Reality Framework' -Version '1' -Generation $Generation -ProviderType 'DeferredReality.BridgeAdapter.DeferredRealityBridgeAdapterProvider' -CommandSpecs @(
   'DEFERRED_REALITY|R|Compact framework status and cached snapshot',
   'DR_REGIONS|R|List stable regions, fidelity, active-map links, and observation levels',
   'DR_PROCESSES|R|List scheduled processes and next due ticks',

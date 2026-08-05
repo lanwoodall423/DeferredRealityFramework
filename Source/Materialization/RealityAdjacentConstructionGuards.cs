@@ -10,11 +10,12 @@ using Verse;
 namespace DeferredReality.Materialization
 {
     /// <summary>Central construction predicate and defense-in-depth cleanup for marked adjacent maps.</summary>
-    internal static class RealityAdjacentConstructionGuards
+    public static class RealityAdjacentConstructionGuards
     {
         internal const string RejectionMessage = "Adjacent regions are temporary work sites and cannot be built on.";
 
-        internal static bool IsBlocked(Map map)
+        /// <summary>Returns whether the framework construction policy blocks player construction on this map.</summary>
+        public static bool IsBlocked(Map map)
         {
             return map != null && DeferredRealityWorldComponent.Current?.IsAdjacentMap(map) == true;
         }

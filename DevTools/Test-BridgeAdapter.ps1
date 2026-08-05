@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw "Manifest DLL is 
 if ((Get-ChildItem -LiteralPath $directory -File).Count -ne 2) { throw 'Owner adapter directory contains unexpected files.' }
 if ($manifest.adapterId -ne $expectedId) { throw "Unexpected adapterId: $($manifest.adapterId)" }
 if (@($manifest.requiredPackageIds) -notcontains $expectedPackage) { throw "Missing required package: $expectedPackage" }
-if ($manifest.executionContract -ne 'cooperative-v1') { throw "Unexpected execution contract: $($manifest.executionContract)" }
+if (-not [string]::IsNullOrWhiteSpace($manifest.executionContract)) { throw "Unexpected execution contract for synchronous provider: $($manifest.executionContract)" }
 $info = Get-Item -LiteralPath $dll
 $identity = [Reflection.AssemblyName]::GetAssemblyName($dll).FullName
 $hash = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash

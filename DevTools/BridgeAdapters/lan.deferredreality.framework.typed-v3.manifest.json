@@ -4,7 +4,7 @@
     "displayName":  "Deferred Reality Framework",
     "version":  "1",
     "generation":  "typed-v3",
-    "buildUtc":  "2026-08-05T13:29:08.8197976Z",
+    "buildUtc":  "2026-08-05T14:20:18.1860125Z",
     "assemblyFile":  "DeferredRealityFramework.BridgeAdapter.typed-v3.dll",
     "assemblyIdentity":  "DeferredRealityFramework.BridgeAdapter.typed-v3, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
     "assemblyBytes":  10752,
@@ -109,5 +109,5 @@
     "modulePackageId":  null,
     "moduleRelativePath":  null,
     "moduleMvid":  null,
-    "executionContract":  "cooperative-v1"
+    "executionContract":  null
 }
