@@ -22,5 +22,9 @@
       <HintPath>$(DeferredRealityManagedPath)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(DeferredRealityHarmonyPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>

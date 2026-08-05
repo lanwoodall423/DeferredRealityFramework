@@ -15,6 +15,8 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 $dependencyJson = & $resolver -RimWorldRoot $RimWorldRoot -HarmonyPath $HarmonyPath -RequireHarmony
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $dependencies = $dependencyJson | ConvertFrom-Json
+$env:RIMWORLD_ROOT = $dependencies.rimWorldRoot
+$env:DEFERRED_REALITY_HARMONY_PATH = $dependencies.harmonyPath
 $buildProperties = @(
     "-p:DeferredRealityRimWorldRoot=$($dependencies.rimWorldRoot)",
     "-p:DeferredRealityHarmonyPath=$($dependencies.harmonyPath)"

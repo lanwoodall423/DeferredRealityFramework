@@ -7,6 +7,7 @@ using System.Threading;
 using DeferredReality.API;
 using DeferredReality.Materialization;
 using DeferredReality.Simulation;
+using HarmonyLib;
 using Verse;
 
 namespace DeferredReality.PureTests
@@ -35,6 +36,8 @@ namespace DeferredReality.PureTests
                 DuplicateRepairSemantics();
                 SaveCompatibleDefaults();
                 AdjacentPolicyBoundaries();
+                HarmonyTargetResolvers();
+                HarmonyPatchRegistrationSmoke();
                 ThreadGuardDoesNotSelfInitialize();
                 return 0;
             }
@@ -48,6 +51,12 @@ namespace DeferredReality.PureTests
         private static Assembly ResolveRimWorldAssembly(object sender, ResolveEventArgs args)
         {
             string name = new AssemblyName(args.Name).Name + ".dll";
+            if (string.Equals(name, "0Harmony.dll", StringComparison.OrdinalIgnoreCase))
+            {
+                string harmonyPath = Environment.GetEnvironmentVariable("DEFERRED_REALITY_HARMONY_PATH");
+                return !string.IsNullOrWhiteSpace(harmonyPath) && File.Exists(harmonyPath)
+                    ? Assembly.LoadFrom(harmonyPath) : null;
+            }
             string path = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
                 "..", "..", "..", "..", "1.6", "Assemblies", name));
             if (File.Exists(path)) return Assembly.LoadFrom(path);
@@ -285,6 +294,42 @@ namespace DeferredReality.PureTests
             worker.Start();
             worker.Join();
             Require(threw, "a worker thread was allowed to initialize or use the main-thread guard");
+        }
+
+        private static void HarmonyTargetResolvers()
+        {
+            Assembly assembly = typeof(RealityAdjacentConstructionGuards).Assembly;
+            foreach (Type type in assembly.GetTypes().Where(item => item.Namespace == "DeferredReality.Materialization"))
+            {
+                MethodInfo resolver = type.GetMethod("TargetMethods",
+                    BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+                if (resolver == null) continue;
+                try
+                {
+                    var methods = resolver.Invoke(null, null) as IEnumerable<MethodBase>;
+                    Require(methods != null && methods.Any(),
+                        "Harmony target resolver returned no methods: " + type.FullName);
+                }
+                catch (TargetInvocationException exception)
+                {
+                    throw new InvalidOperationException("Harmony target resolver threw: " + type.FullName,
+                        exception.InnerException ?? exception);
+                }
+            }
+        }
+
+        private static void HarmonyPatchRegistrationSmoke()
+        {
+            const string harmonyId = "lan.deferredreality.puretests";
+            var harmony = new Harmony(harmonyId);
+            try
+            {
+                harmony.PatchAll(typeof(RealityAdjacentConstructionGuards).Assembly);
+            }
+            finally
+            {
+                harmony.UnpatchAll(harmonyId);
+            }
         }
 
         private static void TransitionCompensationSeams()

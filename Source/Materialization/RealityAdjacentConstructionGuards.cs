@@ -109,22 +109,6 @@ namespace DeferredReality.Materialization
     }
 
     [HarmonyPatch]
-    internal static class AdjacentInstallThingDesignatorPatch
-    {
-        private static IEnumerable<MethodBase> TargetMethods()
-        {
-            foreach (MethodInfo method in AccessTools.GetDeclaredMethods(typeof(Designator_Install))
-                .Where(item => item.Name == "CanDesignateThing" && item.GetParameters().Any(parameter => parameter.ParameterType == typeof(Thing))))
-                yield return method;
-        }
-
-        private static void Postfix(object __instance, ref AcceptanceReport __result)
-        {
-            RealityAdjacentConstructionGuards.RejectIfNeeded(__instance, ref __result);
-        }
-    }
-
-    [HarmonyPatch]
     internal static class AdjacentBuildDesignationExecutionPatch
     {
         private static IEnumerable<MethodBase> TargetMethods()
