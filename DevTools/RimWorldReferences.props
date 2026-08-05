@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <DeferredRealityRimWorldRoot Condition="'$(DeferredRealityRimWorldRoot)' == ''">$(RIMWORLD_ROOT)</DeferredRealityRimWorldRoot>
+    <DeferredRealityRimWorldRoot Condition="'$(DeferredRealityRimWorldRoot)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\RimWorldWin64_Data\Managed\Assembly-CSharp.dll')">$(MSBuildThisFileDirectory)..\..\..</DeferredRealityRimWorldRoot>
+    <DeferredRealityManagedPath Condition="'$(DeferredRealityRimWorldRoot)' != ''">$(DeferredRealityRimWorldRoot)\RimWorldWin64_Data\Managed</DeferredRealityManagedPath>
+    <DeferredRealityHarmonyPath Condition="'$(DeferredRealityHarmonyPath)' == ''">$(DEFERRED_REALITY_HARMONY_PATH)</DeferredRealityHarmonyPath>
+  </PropertyGroup>
+  <Target Name="ValidateDeferredRealityRimWorldReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(DeferredRealityManagedPath)' == '' or !Exists('$(DeferredRealityManagedPath)\Assembly-CSharp.dll')" Text="Deferred Reality build dependencies are missing: set DeferredRealityRimWorldRoot or RIMWORLD_ROOT to a RimWorld 1.6 installation." />
+    <Error Condition="'$(DeferredRealityManagedPath)' == '' or !Exists('$(DeferredRealityManagedPath)\UnityEngine.CoreModule.dll')" Text="Deferred Reality build dependencies are missing UnityEngine.CoreModule.dll under DeferredRealityRimWorldRoot." />
+    <Error Condition="'$(DeferredRealityRequireHarmony)' == 'true' and ('$(DeferredRealityHarmonyPath)' == '' or !Exists('$(DeferredRealityHarmonyPath)'))" Text="Harmony is required for this project: set DeferredRealityHarmonyPath or DEFERRED_REALITY_HARMONY_PATH to 0Harmony.dll." />
+  </Target>
+</Project>

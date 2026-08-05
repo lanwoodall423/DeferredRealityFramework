@@ -16,6 +16,19 @@ the generic APIs. A provider may be absent; its opaque records remain inspectabl
 processes become `ProviderUnavailable`, and no framework fallback invents provider
 gameplay or reconstructs provider-owned objects.
 
+## Build and release boundary
+
+The default `DevTools/Build-All.ps1` workflow builds only the framework and its
+provider-neutral pure tests, then runs those tests. Provider adapters are built
+from their consuming repositories or by explicitly invoked adapter projects;
+they are not framework release inputs or package contents. `Audit-Outputs.ps1`
+and `Check-RepositoryIntegrity.ps1` audit only framework-owned outputs and fail
+if provider DLLs or provider assembly references appear in the DRF package.
+Local compilation requires a configured RimWorld 1.6 root and Harmony path via
+`RIMWORLD_ROOT`/`DEFERRED_REALITY_HARMONY_PATH` or the documented MSBuild
+properties. The CI integrity workflow performs legal source/package checks
+without proprietary RimWorld binaries.
+
 ## Stable state
 
 `DeferredRealityWorldComponent` is the durable owner of latent framework state.

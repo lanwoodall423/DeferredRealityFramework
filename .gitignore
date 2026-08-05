@@ -1,0 +1,29 @@
+# Reproducible build outputs and intermediate state.
+[Bb]in/
+[Oo]bj/
+**/[Bb]in/
+**/[Oo]bj/
+
+# IDE and local tooling state.
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test, coverage, restore, and local cache output.
+TestResults/
+**/TestResults/
+*.trx
+coverage/
+coverage.*
+.nuget/
+packages/
+
+# Bridge compilation staging is not the shipped adapter package.
+DevTools/BridgeAdapter/Build/
+
+# Keep intentional distributable artifacts under 1.6 and DevTools/BridgeAdapters
+# visible to Git. The rules above do not match those paths, but these comments
+# document the release boundary explicitly.

@@ -4,6 +4,11 @@ Deferred Reality providers reference `DeferredRealityFramework.dll` and register
 stable `IRealityProvider` from a `StaticConstructorOnStartup` initializer. The
 framework never references a provider assembly.
 
+Provider projects are not part of the framework's default build or release
+package. Build and package an adapter from the consuming mod repository against
+the released DRF assembly. The framework's pure/static integrity checks validate
+the generic boundary but do not replace provider gameplay or live RimWorld tests.
+
 ## Registration
 
 ```csharp

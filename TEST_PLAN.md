@@ -63,6 +63,14 @@ and provider-specific rollback in its own repository. The framework tests only
 provider-neutral contracts and synthetic providers. Provider assemblies are not
 built or packaged by this project.
 
+`DevTools/Build-All.ps1` builds only the framework and pure tests, then runs the
+pure executable. `DevTools/Audit-Outputs.ps1` and
+`DevTools/Check-RepositoryIntegrity.ps1` provide framework-only package and
+repository checks. Provider adapter builds belong to consuming repositories;
+RimWorld-dependent compilation uses the configured local dependency properties.
+The GitHub integrity workflow runs XML, PowerShell, boundary, package, and
+hygiene checks without proprietary RimWorld files.
+
 Adjacent in-game cases must cover outbound transfer, idle return, explicit task
 completion, save/load during outbound and return, missing origin, unsafe Pawn state,
 duplicate monitor ticks, provider removal/re-registration, construction designator

@@ -1,0 +1,15 @@
+name: Deferred Reality Integrity
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate repository boundaries and package hygiene
+        shell: pwsh
+        run: ./DevTools/Check-RepositoryIntegrity.ps1

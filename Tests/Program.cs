@@ -51,8 +51,13 @@ namespace DeferredReality.PureTests
             string path = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
                 "..", "..", "..", "..", "1.6", "Assemblies", name));
             if (File.Exists(path)) return Assembly.LoadFrom(path);
-            string rimWorldPath = Path.Combine(
-                @"C:\Games\Steam\steamapps\common\RimWorld\RimWorldWin64_Data\Managed", name);
+            string rimWorldRoot = Environment.GetEnvironmentVariable("RIMWORLD_ROOT");
+            if (string.IsNullOrWhiteSpace(rimWorldRoot))
+            {
+                rimWorldRoot = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                    "..", "..", "..", "..", "..", ".."));
+            }
+            string rimWorldPath = Path.Combine(rimWorldRoot, "RimWorldWin64_Data", "Managed", name);
             return File.Exists(rimWorldPath) ? Assembly.LoadFrom(rimWorldPath) : null;
         }
 

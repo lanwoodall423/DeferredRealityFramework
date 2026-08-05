@@ -8,6 +8,14 @@ Consuming mods declare the framework as a dependency and load their own separate
 provider assemblies. Provider assemblies are not packaged or built by this
 framework project.
 
+The default `DevTools/Build-All.ps1` workflow builds only the framework and
+provider-neutral pure tests, then runs the pure executable. Provider repositories
+own adapter builds and release packages. `DevTools/Audit-Outputs.ps1` audits only
+DRF-owned outputs. Local compilation resolves RimWorld and Harmony through
+`RIMWORLD_ROOT`, `DEFERRED_REALITY_HARMONY_PATH`, or the shared MSBuild
+properties; the CI integrity workflow performs source and package checks without
+proprietary game assemblies.
+
 Knowledge Framework remains optional to the framework. Existing consumer
 Knowledge adapters continue to own their domains. Framework observations are
 detached records and can be bridged through `IObservationProvider` or
