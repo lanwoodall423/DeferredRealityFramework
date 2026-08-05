@@ -127,6 +127,7 @@ namespace DeferredReality.API
         void Prepare(RealityMaterializationRequest request, RealityMaterializationPlan plan);
         void Apply(RealityMaterializationContext context);
         void Validate(RealityMaterializationContext context, IList<RealityVeto> vetoes);
+        /// <summary>May be called after Prepare has started, including after a partial throw; must be idempotent.</summary>
         void Rollback(RealityMaterializationContext context);
     }
 
@@ -214,6 +215,29 @@ namespace DeferredReality.API
         void Rollback(RealityAdjacentTransferRequest request, RealityTransferJournalRecord journal);
     }
 
+    /// <summary>Optional provider observation for a live excursion task. Returning false means no reliable evidence exists.</summary>
+    public interface IRealityExcursionTaskProvider
+    {
+        bool TryObserveExcursionTask(RealityExcursionTicket ticket, long now, out RealityExcursionTaskObservation observation);
+    }
+
+    /// <summary>Optional runtime cleanup after an excursion task becomes terminal and unrecoverable.</summary>
+    public interface IRealityExcursionTaskCleanupProvider
+    {
+        void ForgetExcursionTask(RealityExcursionTicket ticket);
+    }
+
+    /// <summary>Bounded evidence supplied by an integration for an excursion task or lease.</summary>
+    public sealed class RealityExcursionTaskObservation
+    {
+        public string taskId;
+        public bool active;
+        public bool completed;
+        public bool abandoned;
+        public long evidenceTick = -1;
+        public string diagnostic;
+    }
+
     /// <summary>Explicit transfer request. No pawn is captured unless a host accepts it.</summary>
     public sealed class RealityAdjacentTransferRequest
     {
@@ -229,6 +253,8 @@ namespace DeferredReality.API
         public string transferId;
         /// <summary>Optional durable excursion ticket attached to a committed outbound transfer.</summary>
         public string excursionId;
+        /// <summary>Optional provider task identity copied into the durable transfer journal.</summary>
+        public string providerTaskId;
         /// <summary>Whether this transfer is the outbound leg that creates the ticket.</summary>
         public bool isOutboundExcursion;
     }
@@ -236,10 +262,14 @@ namespace DeferredReality.API
     /// <summary>Typed metadata for a temporary adjacent map. It is never inferred from a reason string.</summary>
     public sealed class RealityAdjacentMapMetadata
     {
+        /// <summary>Materialization transaction that is authorized to create this temporary site.</summary>
+        public string transactionId;
+        /// <summary>Integration responsible for the adjacent-site lifecycle; independent of region namespace.</summary>
         public string providerId;
         public RealityRegionId originRegionId;
         public int originMapUniqueId = -1;
         public long createdTick = -1;
+        public RealityAdjacentMapLifecycle lifecycle = RealityAdjacentMapLifecycle.Materializing;
     }
 
     /// <summary>Public input for beginning a runtime excursion lease before its outbound transfer commits.</summary>
@@ -248,6 +278,8 @@ namespace DeferredReality.API
         public string excursionId;
         public string providerId;
         public string pawnLoadId;
+        /// <summary>Provider task/lease identity. It is distinct from the framework excursion ID.</summary>
+        public string taskId;
         public RealityRegionId originRegionId;
         public int originMapUniqueId = -1;
         public RealityRegionId destinationRegionId;
@@ -345,6 +377,9 @@ namespace DeferredReality.API
 
         /// <summary>Optional selected anchor copied from the request for host factories.</summary>
         public string TargetAnchorId { get; internal set; }
+
+        /// <summary>Runtime materialization identity used by map factories and readiness callbacks.</summary>
+        public string TransactionId { get; internal set; }
 
         /// <summary>Provider and core plan steps.</summary>
         public IReadOnlyList<string> Steps => steps;

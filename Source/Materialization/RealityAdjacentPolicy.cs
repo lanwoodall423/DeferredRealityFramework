@@ -29,9 +29,9 @@ namespace DeferredReality.Materialization
         {
             if (ticket == null || ticket.status == RealityExcursionStatus.Completed ||
                 ticket.status == RealityExcursionStatus.Quarantined || ticket.retryTick > now) return false;
-            if (taskCompleted) return !unsafeState && !providerTaskActive;
+            if (taskCompleted) return !unsafeState;
             if (ticket.status == RealityExcursionStatus.ReturnRequested || ticket.status == RealityExcursionStatus.Cancelled)
-                return !unsafeState && !providerTaskActive;
+                return !unsafeState;
             if (ticket.status == RealityExcursionStatus.Returning) return !unsafeState && !providerTaskActive;
             bool leaseExpired = now >= ticket.graceDeadline ||
                 ticket.lastTaskHeartbeat > 0 && now - ticket.lastTaskHeartbeat >= DefaultLeaseTicks;
@@ -68,6 +68,11 @@ namespace DeferredReality.Materialization
             return (tickets ?? Enumerable.Empty<RealityExcursionTicket>()).Any(ticket => ticket != null &&
                 ticket.status != RealityExcursionStatus.Completed &&
                 (ticket.originMapUniqueId == mapUniqueId || ticket.destinationMapUniqueId == mapUniqueId));
+        }
+
+        public static bool IsFreshTaskEvidence(long evidenceTick, long now)
+        {
+            return evidenceTick >= 0 && evidenceTick <= now && now - evidenceTick <= DefaultLeaseTicks;
         }
     }
 }

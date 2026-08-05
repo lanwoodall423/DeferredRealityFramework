@@ -33,7 +33,7 @@ namespace DeferredReality.Horticulture
                 RealityProviderCapability.Diagnostics,
             // Event IDs include stable plant identity and cannot legitimately replay after this window.
             operationRetentionTicks = 3600000L,
-            compactableOperationKinds = new List<string> { "consume", "release", "active-map-reconcile" }
+            compactableOperationKinds = new List<string> { "consume", "release", "active-map-reconcile", "demography", "transfer" }
         };
 
         public int Order => 300;

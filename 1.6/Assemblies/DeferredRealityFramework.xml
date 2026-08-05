@@ -64,6 +64,9 @@
         <member name="T:DeferredReality.API.IMaterializationProvider">
             <summary>Provider stage in the transactional materialization pipeline.</summary>
         </member>
+        <member name="M:DeferredReality.API.IMaterializationProvider.Rollback(DeferredReality.API.RealityMaterializationContext)">
+            <summary>May be called after Prepare has started, including after a partial throw; must be idempotent.</summary>
+        </member>
         <member name="T:DeferredReality.API.IStageAwareMaterializationProvider">
             <summary>Optional materialization extension that receives the stages that actually began.</summary>
         </member>
@@ -100,6 +103,15 @@
         <member name="T:DeferredReality.API.IAdjacentRegionTransferHost">
             <summary>Optional host for safe pawn/group transfer between already materialized adjacent maps.</summary>
         </member>
+        <member name="T:DeferredReality.API.IRealityExcursionTaskProvider">
+            <summary>Optional provider observation for a live excursion task. Returning false means no reliable evidence exists.</summary>
+        </member>
+        <member name="T:DeferredReality.API.IRealityExcursionTaskCleanupProvider">
+            <summary>Optional runtime cleanup after an excursion task becomes terminal and unrecoverable.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityExcursionTaskObservation">
+            <summary>Bounded evidence supplied by an integration for an excursion task or lease.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityAdjacentTransferRequest">
             <summary>Explicit transfer request. No pawn is captured unless a host accepts it.</summary>
         </member>
@@ -109,14 +121,26 @@
         <member name="F:DeferredReality.API.RealityAdjacentTransferRequest.excursionId">
             <summary>Optional durable excursion ticket attached to a committed outbound transfer.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityAdjacentTransferRequest.providerTaskId">
+            <summary>Optional provider task identity copied into the durable transfer journal.</summary>
+        </member>
         <member name="F:DeferredReality.API.RealityAdjacentTransferRequest.isOutboundExcursion">
             <summary>Whether this transfer is the outbound leg that creates the ticket.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityAdjacentMapMetadata">
             <summary>Typed metadata for a temporary adjacent map. It is never inferred from a reason string.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityAdjacentMapMetadata.transactionId">
+            <summary>Materialization transaction that is authorized to create this temporary site.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityAdjacentMapMetadata.providerId">
+            <summary>Integration responsible for the adjacent-site lifecycle; independent of region namespace.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityExcursionRequest">
             <summary>Public input for beginning a runtime excursion lease before its outbound transfer commits.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityExcursionRequest.taskId">
+            <summary>Provider task/lease identity. It is distinct from the framework excursion ID.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityAdjacentTransferResult">
             <summary>Result of an adjacent transfer attempt, including safe world-travel fallback.</summary>
@@ -156,6 +180,9 @@
         </member>
         <member name="P:DeferredReality.API.RealityMaterializationPlan.TargetAnchorId">
             <summary>Optional selected anchor copied from the request for host factories.</summary>
+        </member>
+        <member name="P:DeferredReality.API.RealityMaterializationPlan.TransactionId">
+            <summary>Runtime materialization identity used by map factories and readiness callbacks.</summary>
         </member>
         <member name="P:DeferredReality.API.RealityMaterializationPlan.Steps">
             <summary>Provider and core plan steps.</summary>
@@ -331,8 +358,14 @@
         <member name="T:DeferredReality.API.RealityAppliedOperation">
             <summary>Exactly-once mutation marker for catches, kills, releases, and other provider events.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityAppliedOperation.domainId">
+            <summary>Optional provider-defined replay domain; null keeps the marker durable.</summary>
+        </member>
         <member name="M:DeferredReality.API.RealityAppliedOperation.ExposeData">
             <inheritdoc />
+        </member>
+        <member name="T:DeferredReality.API.RealityOperationRetentionWatermark">
+            <summary>Provider proof that exactly-once markers in one domain cannot legitimately replay before this tick.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityConflictReport">
             <summary>Explicit conflict report retained for diagnostics and future resolution.</summary>
@@ -349,8 +382,14 @@
         <member name="T:DeferredReality.API.RealityAdjacentMapRecord">
             <summary>Save-safe role marker for a temporary provider-owned adjacent map.</summary>
         </member>
+        <member name="T:DeferredReality.API.RealityMapCreationIntentRecord">
+            <summary>Save-safe authorization for one materialization transaction to classify one newly created map.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityExcursionTicket">
             <summary>Durable ownership and return lease for one pawn excursion.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityAdjacentDiagnosticRecord">
+            <summary>Bounded diagnostic history for adjacent monitoring and eviction decisions.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityTransferJournalRecord">
             <summary>Save-safe journal for an interrupted adjacent-region transfer.</summary>
@@ -378,6 +417,12 @@
         </member>
         <member name="M:DeferredReality.API.RealityRetentionPolicy.SelectTransferJournals(System.Collections.Generic.IEnumerable{DeferredReality.API.RealityTransferJournalRecord},System.Int64,System.Int64,System.Int32)">
             <summary>Retains every interrupted journal, recent terminal journals, and deterministic newest terminal overflow.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRetentionPolicy.CanExpireOperation(DeferredReality.API.RealityProviderRegistration,DeferredReality.API.RealityAppliedOperation,System.Collections.Generic.IEnumerable{DeferredReality.API.RealityOperationRetentionWatermark},System.Int64)">
+            <summary>Operation age is insufficient by itself; a matching persisted watermark must prove replay is impossible.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRetentionPolicy.SelectExcursions(System.Collections.Generic.IEnumerable{DeferredReality.API.RealityExcursionTicket},System.Int64,System.Int64,System.Int32)">
+            <summary>Retains all recoverable tickets and deterministic recent terminal history.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityRetentionPolicy.FindOldestObservation(System.Collections.Generic.IEnumerable{DeferredReality.API.RealityObservationRecord})">
             <summary>Finds the deterministic oldest observation without sorting the full history.</summary>
@@ -553,6 +598,15 @@
         <member name="P:DeferredReality.API.DeferredRealityWorldComponent.HasAdjacentSafetyWork">
             <summary>Whether persisted adjacent roles or nonterminal excursions still require safety monitoring.</summary>
         </member>
+        <member name="P:DeferredReality.API.DeferredRealityWorldComponent.StorageMaintenanceDirty">
+            <summary>Whether bounded storage maintenance is waiting for its next scheduled pass.</summary>
+        </member>
+        <member name="P:DeferredReality.API.DeferredRealityWorldComponent.NextStorageMaintenanceTick">
+            <summary>Next tick at which dirty storage maintenance may run.</summary>
+        </member>
+        <member name="P:DeferredReality.API.DeferredRealityWorldComponent.LastCompactionReport">
+            <summary>Last deterministic compaction report.</summary>
+        </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ExposeData">
             <inheritdoc />
         </member>
@@ -640,8 +694,14 @@
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.HasAppliedOperation(System.String)">
             <summary>Returns whether a mutation operation has already been applied.</summary>
         </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RecordAppliedOperation(System.String,System.String,System.String,System.Int64)">
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RecordAppliedOperation(System.String,System.String,System.String,System.Int64,System.String)">
             <summary>Persists an exactly-once operation marker.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UpsertOperationRetentionWatermark(DeferredReality.API.RealityOperationRetentionWatermark)">
+            <summary>Publishes provider proof that a replay domain has advanced past a durable tick.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.OperationWatermarkSnapshots(System.String)">
+            <summary>Returns detached, deterministic provider replay-watermark records.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.IsMigrationCommitted(System.String,System.String,System.Int32)">
             <summary>Returns whether a provider migration version is committed.</summary>
@@ -666,6 +726,18 @@
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UpsertTransferJournal(DeferredReality.API.RealityTransferJournalRecord)">
             <summary>Creates or updates a durable transfer journal.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.BeginMapCreationIntent(System.String,DeferredReality.API.RealityRegionId,DeferredReality.API.RealityAdjacentMapMetadata,System.String@)">
+            <summary>Authorizes one provider-owned adjacent map creation before the host starts map generation.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.BindMapCreationIntent(System.String,Verse.Map)">
+            <summary>Binds the intent to the map identity returned by the host factory.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ClearMapCreationIntent(System.String,System.String,System.Boolean)">
+            <summary>Clears a creation intent after commit, rollback, or explicit recovery.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.MapCreationIntentSnapshots">
+            <summary>Returns detached creation intents for diagnostics and deterministic save recovery.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.MarkAdjacentMap(Verse.Map,DeferredReality.API.RealityRegionId,DeferredReality.API.RealityAdjacentMapMetadata)">
             <summary>Marks a generated map as a temporary adjacent site using explicit typed metadata.</summary>
@@ -720,6 +792,9 @@
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.CompactStorage(System.Int64)">
             <summary>Runs conservative storage compaction. Interrupted recovery records and unapproved markers are retained.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RecordAdjacentDiagnostic(System.String,System.String,System.String,System.String,System.Int64,System.Boolean)">
+            <summary>Records bounded adjacent diagnostics without making the monitor history unbounded.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.PreferDuplicate(System.Object,System.Object)">
             <summary>Stable repair keeps the first serialized slot, replacing it only with an explicitly newer/versioned record.</summary>
@@ -847,6 +922,9 @@
         <member name="T:DeferredReality.Materialization.RealityAdjacentDebugActions">
             <summary>Developer action for creating topology descriptors without changing travel behavior.</summary>
         </member>
+        <member name="T:DeferredReality.Materialization.RealityMapCreationPolicy">
+            <summary>Pure checks for transaction-scoped adjacent map classification.</summary>
+        </member>
         <member name="T:DeferredReality.Materialization.RealityMapIdentityPolicy">
             <summary>Pure selection rules for provider-owned map identity claims.</summary>
         </member>
@@ -877,8 +955,14 @@
         <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.TryGet(System.String,DeferredReality.API.IRealityMapFactory@)">
             <summary>Resolves a provider-scoped factory, then the legacy fallback.</summary>
         </member>
+        <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.TryGetScoped(System.String,DeferredReality.API.IRealityMapFactory@)">
+            <summary>Resolves only a provider-owned factory; adjacent sites must never use the legacy fallback.</summary>
+        </member>
         <member name="T:DeferredReality.Materialization.RealityMaterializationService">
             <summary>Transactional materialization of latent regions.</summary>
+        </member>
+        <member name="P:DeferredReality.Materialization.RealityMaterializationService.LastRollbackFailures">
+            <summary>Recent rollback failures retained for diagnostics; the original transition error remains primary.</summary>
         </member>
         <member name="M:DeferredReality.Materialization.RealityMaterializationService.TryMaterialize(DeferredReality.API.DeferredRealityWorldComponent,DeferredReality.API.RealityMaterializationRequest)">
             <summary>Runs planning, preparation, mutation, validation, commit, or rollback.</summary>

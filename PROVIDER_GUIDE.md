@@ -104,7 +104,22 @@ active combat, Lords, mental states, jobs, reservations, quests,
 player-controlled pawns, and unique Things as veto conditions. Adjacent pawn
  movement is opt-in through `IAdjacentRegionTransferHost`; failed preparation or
  commit must either prove exact rollback before fallback or leave an interrupted
- journal and ownership record for recovery.
+journal and ownership record for recovery.
+
+`RealityRegionId` identifies the represented latent region, not the owner of an
+adjacent site. Set both `RealityMaterializationRequest.providerId` and
+`adjacentMap.providerId` to the integration responsible for the temporary site
+even when the region is a shared `core` `Surface(tile)` identity. Do not rewrite
+the region namespace to match the provider. Adjacent materialization requires a
+provider-scoped map factory and an explicit provider map-identity claim; it never
+uses the legacy fallback factory.
+
+The framework creates a transaction-scoped map-creation intent before invoking the
+factory. The intent is the only authorization for a newly generated map to be
+reclassified. Map readiness and provider map-component callbacks may both call
+`RegisterMap`, but they converge through the same intent-aware idempotent path.
+Existing ordinary maps, persisted aliases, stale intents, and same-tile conflicts
+fail closed.
 
 Compression ownership is explicit: `RealityCompressionRequest.providerId`, or the
 region provider namespace when omitted, selects one deterministic provider list.
@@ -117,7 +132,7 @@ must not claim a map or region ambiguously.
 ## Adjacent excursions
 
 Adjacent materialization must set `RealityMaterializationRequest.adjacentMap` with
-an explicit provider, origin region, origin map ID, and creation tick. Do not infer
+an explicit owner/provider, origin region, origin map ID, and creation tick. Do not infer
 the role from `reason` text or from a map merely being non-home. A custom map
 parent should implement `IRealityMapIdentityProvider` and return a stable claim
 containing its layer/custom/instance/provider identity; `WildlifeDeferredMapParent`
@@ -140,8 +155,24 @@ provider removal, interrupted journals, duplicate load IDs, and world-pawn/carav
 ownership are recovery states: retain the ticket/map and report a diagnostic.
 The framework's coarse monitor and real map-factory eviction are safety boundaries;
 providers must not bypass them by dropping map references.
+Providers that keep runtime task state may optionally implement
+`IRealityExcursionTaskCleanupProvider`; the framework calls it only after a ticket
+is terminal and no longer recoverable, so task/evidence dictionaries stay bounded.
 
 Only one nonterminal ticket may own a Pawn load ID. If a completed return journal is
 loaded beside an existing Returning ticket, the framework finalizes it only after
 finding the exact Pawn on its recorded origin map; no summary reconstruction or
 alternate colony-map selection is allowed.
+
+`IMaterializationProvider.Rollback` is idempotent and may run after `Prepare` has
+partially mutated provider state and thrown. The framework records a provider before
+calling `Prepare`, rolls back the throwing provider and earlier providers in reverse
+order, and reports rollback failures separately from the original transition error.
+Providers must tolerate missing temporary state and must not hide the original
+exception.
+
+For recurring demography, transfer, consume, release, and active-map-reconcile
+operations, declare the replay threat and advance a persisted provider/kind/domain
+watermark only at a durable boundary proving replay is impossible. Retention age
+and metadata alone are not proof. Applied-operation and journal writes defer broad
+compaction to bounded maintenance; provider mutation calls must remain cheap.

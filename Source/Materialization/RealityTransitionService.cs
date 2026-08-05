@@ -61,11 +61,31 @@ namespace DeferredReality.Materialization
             factory = fallbackFactory;
             return factory != null;
         }
+
+        /// <summary>Resolves only a provider-owned factory; adjacent sites must never use the legacy fallback.</summary>
+        public static bool TryGetScoped(string providerId, out IRealityMapFactory factory)
+        {
+            factory = null;
+            return !string.IsNullOrWhiteSpace(providerId) &&
+                ProviderFactories.TryGetValue(providerId.Trim(), out factory) && factory != null;
+        }
     }
 
     /// <summary>Transactional materialization of latent regions.</summary>
     public static class RealityMaterializationService
     {
+        private static readonly List<string> LastRollbackFailureList = new List<string>();
+
+        /// <summary>Recent rollback failures retained for diagnostics; the original transition error remains primary.</summary>
+        public static IReadOnlyList<string> LastRollbackFailures => LastRollbackFailureList.ToList();
+
+        internal static void RememberRollbackFailures(IEnumerable<string> errors)
+        {
+            LastRollbackFailureList.Clear();
+            foreach (string error in (errors ?? Enumerable.Empty<string>()).Where(item => !string.IsNullOrEmpty(item))
+                .Distinct(StringComparer.Ordinal).Take(64)) LastRollbackFailureList.Add(error);
+        }
+
         /// <summary>Runs planning, preparation, mutation, validation, commit, or rollback.</summary>
         public static RealityTransitionResult TryMaterialize(DeferredRealityWorldComponent world, RealityMaterializationRequest request)
         {
@@ -82,6 +102,8 @@ namespace DeferredReality.Materialization
                 return result;
             }
             var plan = new RealityMaterializationPlan();
+            string transactionId = "materialize:" + request.regionId + ":" + request.now + ":" + (request.targetAnchorId ?? string.Empty);
+            plan.TransactionId = transactionId;
             plan.TargetAnchorId = request.targetAnchorId;
             plan.AddStep("validate-region");
             Map activeMap = Find.Maps?.FirstOrDefault(map => map != null && map.uniqueID == region.activeMapUniqueId);
@@ -108,7 +130,6 @@ namespace DeferredReality.Materialization
             IRealityMapFactory selectedFactory = null;
             HashSet<int> liveMapIdsBeforeFactory = new HashSet<int>((Find.Maps ?? Enumerable.Empty<Map>())
                 .Where(item => item != null).Select(item => item.uniqueID));
-            string transactionId = "materialize:" + request.regionId + ":" + request.now + ":" + (request.targetAnchorId ?? string.Empty);
             var context = new RealityMaterializationContext(world, request, plan, activeMap, transactionId);
             List<IMaterializationProvider> preparedProviders = new List<IMaterializationProvider>();
             var providerStages = new Dictionary<IMaterializationProvider, RealityMaterializationStage>();
@@ -116,6 +137,7 @@ namespace DeferredReality.Materialization
             List<TransactionalAnchorStage> appliedAnchors = new List<TransactionalAnchorStage>();
             IReadOnlyList<RealityAnchorSnapshot> anchors = world.AnchorSnapshots(request.regionId.ToString())
                 .Where(item => item?.record != null).OrderBy(item => item.record.anchorId, StringComparer.Ordinal).ToList();
+            bool mapCreationIntentStarted = false;
             try
             {
                 context.MarkStage(RealityMaterializationStage.Preparation);
@@ -124,8 +146,9 @@ namespace DeferredReality.Materialization
                     try
                     {
                         providerStages[provider] = RealityMaterializationStage.Preparation;
-                        provider.Prepare(request, plan);
+                        // Prepare may mutate before throwing; register it before invocation so compensation is attempted.
                         preparedProviders.Add(provider);
+                        provider.Prepare(request, plan);
                     }
                     catch (Exception exception)
                     {
@@ -136,16 +159,30 @@ namespace DeferredReality.Materialization
                 if (plan.Vetoes.Count > 0) throw new RealityTransitionException("Materialization preparation was vetoed.");
                 if (plan.ActiveMap == null)
                 {
-                    string factoryProviderId = string.IsNullOrEmpty(request.providerId)
-                        ? request.regionId.ProviderNamespace : request.providerId;
-                    if (!RealityMapFactoryRegistry.TryGet(factoryProviderId, out selectedFactory))
+                    string factoryProviderId = request.adjacentMap?.providerId;
+                    if (string.IsNullOrEmpty(factoryProviderId))
+                        factoryProviderId = string.IsNullOrEmpty(request.providerId)
+                            ? request.regionId.ProviderNamespace : request.providerId;
+                    bool factoryFound = request.adjacentMap != null
+                        ? RealityMapFactoryRegistry.TryGetScoped(factoryProviderId, out selectedFactory)
+                        : RealityMapFactoryRegistry.TryGet(factoryProviderId, out selectedFactory);
+                    if (!factoryFound)
                         throw new RealityTransitionException("No map factory is registered for this region.");
                     if (request.adjacentMap != null &&
                         !string.Equals(request.adjacentMap.providerId, factoryProviderId, StringComparison.Ordinal))
                         throw new RealityTransitionException("The adjacent map owner does not match the selected map factory.");
+                    if (request.adjacentMap != null)
+                    {
+                        if (!world.BeginMapCreationIntent(transactionId, request.regionId, request.adjacentMap,
+                            out string intentDiagnostic))
+                            throw new RealityTransitionException(intentDiagnostic ?? "The adjacent map creation intent was rejected.");
+                        mapCreationIntentStarted = true;
+                    }
                     context.MarkStage(RealityMaterializationStage.MapAcquisition);
                     bool factorySucceeded = selectedFactory.TryCreateMap(request.regionId, plan, out Map factoryMap, out string diagnostic);
                     if (factoryMap != null && !liveMapIdsBeforeFactory.Contains(factoryMap.uniqueID)) createdMap = factoryMap;
+                    if (factoryMap != null && mapCreationIntentStarted && !world.BindMapCreationIntent(transactionId, factoryMap))
+                        throw new RealityTransitionException("The generated map did not match its creation intent.");
                     if (!factorySucceeded || factoryMap == null)
                         throw new RealityTransitionException(diagnostic ?? "The host map factory could not create a normal Map.");
                     plan.ActiveMap = factoryMap;
@@ -273,6 +310,7 @@ namespace DeferredReality.Materialization
                                 notificationException);
                         }
                 result.succeeded = true;
+                if (mapCreationIntentStarted) world.ClearMapCreationIntent(transactionId);
                 result.steps = plan.Steps.ToList();
                 return result;
             }
@@ -296,6 +334,18 @@ namespace DeferredReality.Materialization
                 }
                 try { world.RestoreState(state); }
                 catch (Exception restoreException) { rollbackErrors.Add("framework state: " + restoreException.Message); }
+                if (mapCreationIntentStarted)
+                {
+                    try
+                    {
+                        world.ClearMapCreationIntent(transactionId);
+                        world.Quarantine("map-creation-intent", transactionId,
+                            request.adjacentMap?.providerId ?? "core",
+                            "Adjacent map materialization intent rolled back: " + exception.Message,
+                            request.regionId.ToString());
+                    }
+                    catch (Exception intentException) { rollbackErrors.Add("map creation intent: " + intentException.Message); }
+                }
                 if (createdMap != null && selectedFactory != null)
                 {
                     try { selectedFactory.RemoveMap(createdMap); }
@@ -305,6 +355,7 @@ namespace DeferredReality.Materialization
                 result.originalError = exception.Message;
                 result.rolledBack = true;
                 result.rollbackErrors = rollbackErrors;
+                RealityMaterializationService.RememberRollbackFailures(rollbackErrors);
                 result.vetoes = plan.Vetoes.Count > 0 ? plan.Vetoes.ToList() :
                     new[] { new RealityVeto("materialization.rollback", exception.Message, "core", 3) };
                 result.steps = plan.Steps.ToList();
@@ -415,8 +466,9 @@ namespace DeferredReality.Materialization
             {
                 foreach (ICompressionProvider provider in providers)
                 {
-                    provider.Prepare(request);
+                    // Compression Prepare may partially mutate before throwing; rollback is idempotent and must see it.
                     preparedProviders.Add(provider);
+                    provider.Prepare(request);
                 }
                 var validationVetoes = new List<RealityVeto>();
                 foreach (ICompressionProvider provider in preparedProviders) provider.Validate(request, validationVetoes);
@@ -446,6 +498,7 @@ namespace DeferredReality.Materialization
                 result.error = exception.Message;
                 result.originalError = exception.Message;
                 result.rollbackErrors = rollbackErrors;
+                RealityMaterializationService.RememberRollbackFailures(rollbackErrors);
                 result.rolledBack = true;
                 result.vetoes = new[] { new RealityVeto("compression.rollback", exception.Message, "core", 3) };
                 return result;
@@ -465,6 +518,7 @@ namespace DeferredReality.Materialization
             }
             try { if (world != null && state != null) world.RestoreState(state); }
             catch (Exception exception) { errors.Add("framework state: " + exception.Message); }
+            RealityMaterializationService.RememberRollbackFailures(errors);
             return errors;
         }
 

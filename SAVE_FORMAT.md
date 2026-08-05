@@ -2,7 +2,7 @@
 
 The framework stores one `DeferredRealityWorldComponent` under the world save.
 The root schema key is `deferredRealitySaveSchema`; the current root schema is
-`3`. All framework child records carry their own `schemaVersion`.
+`5`. All framework child records carry their own `schemaVersion`.
 
 ## Root collections
 
@@ -22,6 +22,12 @@ The root schema key is `deferredRealitySaveSchema`; the current root schema is
 - `deferredRealityTransferJournals`: save-safe adjacent transfer transactions.
 - `deferredRealityAdjacentMaps`: explicit temporary adjacent-map role markers.
 - `deferredRealityExcursions`: durable Pawn ownership and return leases.
+- `deferredRealityMapCreationIntents`: transaction-scoped authorization for a
+  newly generated adjacent map to become a marked site.
+- `deferredRealityAdjacentDiagnostics`: bounded adjacent monitor and eviction
+  diagnostics, including resolved history.
+- `deferredRealityOperationWatermarks`: provider/domain proofs that exactly-once
+  markers are past a replay-safe boundary.
 
 Process records added in root schema 2 contain `pauseReason` and `cancelledTick`.
 Missing fields from older saves default to `None` and `-1`. A paused legacy
@@ -32,6 +38,22 @@ is not serialized; it is rebuilt after load.
 `Map.uniqueID` is only stored in an alias or active-map link. A latent region ID
 never depends on it. Region IDs round-trip as `rr1|...` strings and include tile,
 layer, local slot, instance, parent, and provider namespace.
+
+An adjacent marker's `regionId` identifies the represented region and retains its
+own namespace, commonly `core` for `Surface(tile)`. Its `providerId` separately
+identifies the integration that owns the temporary site and its lifecycle. A
+Wildlife-owned adjacent site may therefore represent a `core` surface region;
+old markers missing the newer transaction field remain valid without namespace
+rewriting.
+
+Map creation intents persist the materialization transaction, expected region,
+adjacent owner, origin, creation tick, lifecycle, and pre-existing/created map
+IDs. A readiness callback may classify a map only when the intent, provider
+identity claim, tile, and map ID agree. Unbound or conflicting intents are
+retained or quarantined rather than guessed. Missing intent collections from
+schema 3/4 missing intent, diagnostic, and watermark collections load as empty. New
+adjacent fields default to empty strings or `-1` without rewriting the represented
+region namespace.
 
 ## Migration and resilience
 
@@ -57,6 +79,17 @@ bounded at 8192 records, quarantine at 4096 unique records, and conflicts at
 and capped at 256 newest terminal records; interrupted journals are always
 retained. Exactly-once operation markers remain durable unless the provider
 declares a positive retention window and explicitly lists the operation kind.
+Even then, a marker is removed only when its nonempty domain has a matching
+persisted watermark proving replay is impossible through at least the marker
+tick. Age alone is never sufficient; recurring demography, transfer, consume,
+release, and active-map-reconcile markers without that proof remain durable.
+Terminal excursions are retained for 600000 ticks with a deterministic 1024-record
+cap, retired adjacent markers for 600000 ticks with a 256-record cap, and resolved
+adjacent diagnostics for 600000 ticks with a 2048-record cap. Active, returning,
+quarantined, blocked, interrupted, and cancelled tickets awaiting exact return are
+never compacted; recovery references override age and cap selection. Storage maintenance is dirty/coarse
+rather than a full scan after every operation or transfer-journal mutation; save
+and post-load repair still force maintenance.
 Cancelled processes and map aliases are removed only with the corresponding
 provider policy and no persisted recovery reference.
 
@@ -76,14 +109,18 @@ Removing a warm-cache reference alone is never treated as map eviction. Provider
 removal retains the map and ticket until the provider is restored.
 
 Adjacent map markers are typed records, not reason-string conventions. They retain
-provider, region, origin map/region, creation/access ticks, and lifecycle. Marked
+separate owner/provider and represented region, origin map/region, creation/access
+ticks, transaction identity, and lifecycle. Marked
 maps are temporary non-buildable work sites; the construction guard rejects build,
 install, blueprint, and frame paths while leaving map generation and deconstruction
 available. The `enableAdjacentRegions` setting remains opt-in and defaults false.
-Excursion leases retain grace/deadline, heartbeat, return transfer ID, retry, status,
-and diagnostics. The world monitor runs at a coarse interval, returns only safely
-idle Pawns, and uses retry backoff for unsafe, missing-origin, or unavailable-provider
-states. Warm-map eviction is recency ordered and requires returned Pawns, no player
+Excursion leases retain provider `taskId`, grace/deadline, heartbeat, return transfer
+ID, retry, terminal tick, status, and diagnostics. Providers may expose fresh task
+observations and explicit completion/abandon hooks; without reliable evidence, the
+bounded lease expires and only conservative idle fallback may request return. The
+world monitor runs at a coarse interval, returns only safely idle Pawns, and uses
+retry backoff for unsafe, missing-origin, or unavailable-provider states. Warm-map
+eviction is recency ordered and requires returned Pawns, no player
 or recovery references, successful provider compression, and a real registered map
 factory removal.
 

@@ -100,12 +100,22 @@ namespace DeferredReality.Simulation
             source.extinct = source.amount <= 0f;
             destination.extinct = false;
             if (!world.UpsertPopulation(source) || !world.UpsertPopulation(destination) ||
-                !world.RecordAppliedOperation(operationId, providerId, "transfer", now))
+                !world.RecordAppliedOperation(operationId, providerId, "transfer", now,
+                    source.populationId + "->" + destination.populationId))
             {
                 world.RestoreState(state);
                 result.error = "Transfer transaction failed and was rolled back.";
                 return result;
             }
+            world.UpsertOperationRetentionWatermark(new RealityOperationRetentionWatermark
+            {
+                providerId = providerId,
+                kind = "transfer",
+                domainId = source.populationId + "->" + destination.populationId,
+                safeThroughTick = now,
+                proof = "population-transfer-state-committed:" + operationId,
+                updatedTick = now
+            });
             result.succeeded = true;
             result.before = source.amount + amount;
             result.after = source.amount;
@@ -159,12 +169,22 @@ namespace DeferredReality.Simulation
             record.established = record.established || next > 0f;
             record.lastUpdateTick = now;
             RealityWorldState state = world.CaptureState();
-            if (!world.UpsertPopulation(record) || !world.RecordAppliedOperation(operationId, effectiveProvider, kind, now))
+            if (!world.UpsertPopulation(record) || !world.RecordAppliedOperation(operationId, effectiveProvider, kind, now,
+                record.populationId))
             {
                 world.RestoreState(state);
                 result.error = "Population mutation failed and was rolled back.";
                 return result;
             }
+            world.UpsertOperationRetentionWatermark(new RealityOperationRetentionWatermark
+            {
+                providerId = effectiveProvider,
+                kind = kind,
+                domainId = record.populationId,
+                safeThroughTick = now,
+                proof = "population-state-committed:" + operationId,
+                updatedTick = now
+            });
             if (kind == "active-map-reconcile" && RealityProviderRegistry.TryGet(record.providerId, out IRealityProvider owner) &&
                 owner is IPopulationProvider activeMapProvider)
             {

@@ -26,11 +26,22 @@ Focused pure checks cover:
   rollback;
 - same-tile standard-map collisions, explicit provider map claims, conflicting
   claims, persisted-alias authority, and single map-readiness handling;
+- core `Surface(tile)` region identity with a separate Wildlife adjacent owner;
+  creation-intent binding, pre-existing-map rejection, stale/conflicting intent
+  rejection, load-time intent clearing, and generated-map reclassification;
 - compatible and incompatible constraint facets such as `departed north` and
   `injured` sharing a subject without a false conflict.
 - adjacent return grace/completion/unsafe-state/backoff boundaries, inverse edges,
   recency/tie-stable warm eviction, active-lease blocking, marker/ticket defaults,
   and construction rejection policy.
+- partial `Prepare` mutation followed by a thrown provider, reverse rollback of the
+  throwing provider, idempotent repeated recovery, and preserved rollback errors;
+- terminal excursion/retired-marker/resolved-diagnostic age and cap selection,
+  recoverable-record retention, and repeated-monitor recency stability;
+- exactly-once demography/transfer/consume/release/active-map-reconcile markers
+  retained without a watermark and removed only with a matching domain watermark;
+- provider task IDs, bounded fresh task evidence, explicit completion/abandonment,
+  lease-expiry safe-idle fallback, and dirty/coarse maintenance scheduling.
 
 Pure adjacent checks also cover safe-idle classification and rejection of worker
 threads by the explicit main-thread guard.
@@ -55,6 +66,8 @@ threads by the explicit main-thread guard.
 - load a new game through `LongEventHandler` map initialization and verify that
   deferred map registration and all installed adapter migrations execute on the
   main thread without blocking map readiness.
+- fail a generated adjacent transition at factory, provider, validation, and
+  intent-marking stages and verify framework/map/intent rollback in diagnostics.
 
 ## Provider and in-game checks
 
@@ -68,6 +81,9 @@ duplicate monitor ticks, provider removal/re-registration, construction designat
 and blueprint/frame defense-in-depth, and warm eviction vetoes/successful factory
 removal. Verify the exact Pawn instance retains inventory/equipment/apparel/health/
 relations/needs and that no alternate colony map is selected.
+The `Create Wildlife Adjacent Site` developer action exercises the real Wildlife
+factory and verifies the core region identity, `lan.wildlife` owner, adjacent
+marker, construction rejection, and registration/intent cleanup.
 
 Aquaculture: natural river/coast migration links, closed-water isolation, catch
 exactness, species diversity/rarity, stable water IDs after topology rebuild,
@@ -84,9 +100,39 @@ old saves, multiple maps, unsupported components, and removed providers.
 
 Dev actions are exposed under `Deferred Reality`: inspector, one-day/quadrum/year
 catch-up, audit, concise dump, compression dry-run, adjacent diagnostics, an
-immediate adjacent safety monitor, and an eviction attempt. No UI action is used
-by the normal scheduler. The adjacent feature flag remains disabled by default
-until these in-game checks pass.
+immediate adjacent safety monitor, an eviction attempt, `Create and verify Wildlife
+adjacent site`, `Transfer selected pawn to Wildlife adjacent site`, `Heartbeat
+selected Wildlife excursion`, `Complete and return selected Wildlife excursion`,
+and `Run adjacent release-readiness checklist`. The transfer, heartbeat, and
+completion actions use the public lease/transfer APIs and log exact Pawn/ticket/
+return-journal results; they do not fake save/load or map deinitialization.
+
+Manual live checklist:
+
+1. Create or load a home map and enable the experimental adjacent-region setting.
+2. Run `Create and verify Wildlife adjacent site`; verify the core `Surface(tile)`
+   region, `lan.wildlife` marker owner, temporary lifecycle, intent cleanup, and
+   build rejection while ordinary-map construction remains available.
+3. Run `Transfer selected pawn to Wildlife adjacent site`; inspect the exact Pawn
+   load ID, origin map, task ID, and durable outbound ticket in the diagnostics dump.
+4. Save and reload while resident; run `Heartbeat selected Wildlife excursion` or
+   the Wildlife integration callback, then run `Complete and return selected Wildlife excursion`.
+5. Save and reload during return, run the monitor twice, and verify one completed
+   return journal, the same Pawn instance on the origin map, and no duplicate ticket.
+6. Attempt buildings, walls, furniture, floors, reinstall, blueprints, and frames
+   on the adjacent map; verify the temporary-work-site rejection. Verify ordinary
+   maps and deconstruction are unaffected.
+7. Remove the provider or make the origin unavailable, run the monitor, and verify
+   the Pawn/site remain alive with a diagnostic and retry state.
+8. Clear the site, run the eviction action, and verify compression plus the owning
+   factory remove the real map and deinitialize it; otherwise verify a veto.
+9. Run the checklist after each save/load boundary. Same-tile identity conflicts
+   and partial-Prepare compensation remain covered by pure tests unless a provider
+   test harness is installed.
+
+No UI action is used by the normal scheduler. The adjacent feature flag remains
+disabled by default and adjacent regions are not production-ready until this live
+checklist passes in RimWorld.
 
 This checkout has no separate automated live-world harness. The listed RimWorld and
 Scribe scenarios are exercised through the adjacent diagnostics/dev actions and the

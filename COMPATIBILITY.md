@@ -38,6 +38,19 @@ The adapter boundary is conservative:
   `enableAdjacentRegions` remains false until the full in-game acceptance suite is
   complete.
 
+`RealityRegionId.ProviderNamespace` remains the namespace of represented latent
+state. It is not required to equal `RealityAdjacentMapRecord.providerId`:
+provider ownership is a separate persisted field so Wildlife can own a temporary
+site representing a `core` `Surface(tile)` region. Root save schema 5 adds
+optional map-creation intents, adjacent diagnostics, and operation watermarks;
+schema 3/4 saves load missing collections as empty, and old adjacent markers
+without transaction IDs remain valid. Excursion task IDs, terminal ticks, and
+ provider task IDs default to empty strings or `-1`. The optional
+ `IRealityExcursionTaskCleanupProvider` is additive; providers that implement it
+ can release runtime task/evidence state after a ticket is terminal. Cancelled
+ tickets without a verified exact return remain recoverable and are not treated
+ as historical records.
+
 The adjacent path is not described as production-ready before that live acceptance
 suite passes. A warm-cache reference is never treated as map eviction; only the
 registered provider factory may remove the actual map after all safety vetoes pass.
@@ -54,6 +67,11 @@ aliases remain authoritative during migration. Nonstandard same-tile maps need a
 explicit `IRealityMapIdentityProvider` claim; unclaimed duplicates are quarantined
 instead of replacing an existing region link. Map readiness is handled once by
 the `Map.FinalizeInit` lifecycle hook.
+
+During generation, a transaction-scoped intent is the only compatibility path that
+can reclassify a newly created map. The `Map.FinalizeInit` postfix and provider map
+component callbacks delegate to the same intent-aware `RegisterMap` logic, so
+repeated callbacks cannot create different ordinary or adjacent roles.
 
 Removal of an integration mod does not make framework state unloadable. Its
 provider payloads and records remain orphan-inspectable. Reinstalling the mod

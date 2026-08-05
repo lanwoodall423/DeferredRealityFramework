@@ -8,8 +8,10 @@ using DeferredReality.Materialization;
 using DeferredReality.Simulation;
 using LudeonTK;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
+using Verse.AI.Group;
 
 namespace DeferredReality.Diagnostics
 {
@@ -29,6 +31,16 @@ namespace DeferredReality.Diagnostics
         public readonly int providers;
         public readonly int adjacentMaps;
         public readonly int excursions;
+        public readonly int activeExcursions;
+        public readonly int historicalExcursions;
+        public readonly int mapCreationIntents;
+        public readonly int operationWatermarks;
+        public readonly bool storageMaintenanceDirty;
+        public readonly long nextStorageMaintenanceTick;
+        public readonly int compactedExcursions;
+        public readonly int compactedRetiredAdjacentMaps;
+        public readonly int compactedAdjacentDiagnostics;
+        public readonly IReadOnlyList<string> rollbackFailures;
         public readonly IReadOnlyList<string> adjacentLines;
         public readonly long totalProcessExecutions;
         public readonly long totalProcessFailures;
@@ -54,7 +66,20 @@ namespace DeferredReality.Diagnostics
             providers = RealityProviderRegistry.Registrations().Count;
             adjacentLines = world == null ? Array.Empty<string>() : RealityAdjacentSurfaceService.AdjacentDiagnostics(world);
             adjacentMaps = world?.AdjacentMapSnapshots().Count ?? 0;
-            excursions = world?.ExcursionSnapshots().Count ?? 0;
+            IReadOnlyList<RealityExcursionTicket> excursionRows = world?.ExcursionSnapshots() ?? Array.Empty<RealityExcursionTicket>();
+            excursions = excursionRows.Count;
+            activeExcursions = excursionRows.Count(ticket => ticket != null &&
+                !RealityRetentionPolicy.IsTerminalExcursion(ticket));
+            historicalExcursions = excursions - activeExcursions;
+            mapCreationIntents = world?.MapCreationIntentSnapshots().Count ?? 0;
+            operationWatermarks = world?.OperationWatermarkSnapshots().Count ?? 0;
+            storageMaintenanceDirty = world?.StorageMaintenanceDirty == true;
+            nextStorageMaintenanceTick = world?.NextStorageMaintenanceTick ?? 0;
+            RealityCompactionReport compaction = world?.LastCompactionReport ?? new RealityCompactionReport();
+            compactedExcursions = compaction.excursionsRemoved;
+            compactedRetiredAdjacentMaps = compaction.retiredAdjacentMapsRemoved;
+            compactedAdjacentDiagnostics = compaction.adjacentDiagnosticsRemoved;
+            rollbackFailures = RealityMaterializationService.LastRollbackFailures;
             totalProcessExecutions = RealityProcessScheduler.TotalExecutions;
             totalProcessFailures = RealityProcessScheduler.TotalFailures;
             boundedCatchups = RealityProcessScheduler.TotalBoundedCatchups;
@@ -105,7 +130,18 @@ namespace DeferredReality.Diagnostics
                 .Append(" anchors=").Append(summary.anchors).Append(" constraints=").Append(summary.constraints)
                 .Append(" processes=").Append(summary.processes).Append(" observations=").Append(summary.observations)
                 .Append(" conflicts=").Append(summary.conflicts).Append(" quarantine=").Append(summary.quarantine)
-                .Append(" adjacentMaps=").Append(summary.adjacentMaps).Append(" excursions=").Append(summary.excursions).AppendLine();
+                .Append(" adjacentMaps=").Append(summary.adjacentMaps).Append(" excursions=").Append(summary.excursions)
+                .Append(" activeExcursions=").Append(summary.activeExcursions)
+                .Append(" historicalExcursions=").Append(summary.historicalExcursions)
+                .Append(" mapCreationIntents=").Append(summary.mapCreationIntents)
+                .Append(" operationWatermarks=").Append(summary.operationWatermarks)
+                .Append(" maintenanceDirty=").Append(summary.storageMaintenanceDirty)
+                .Append(" nextMaintenance=").Append(summary.nextStorageMaintenanceTick).AppendLine();
+            builder.Append("compaction|excursions=").Append(summary.compactedExcursions)
+                .Append("|retiredAdjacentMaps=").Append(summary.compactedRetiredAdjacentMaps)
+                .Append("|adjacentDiagnostics=").Append(summary.compactedAdjacentDiagnostics).AppendLine();
+            foreach (string rollbackFailure in summary.rollbackFailures)
+                builder.Append("rollback-failure|").Append(rollbackFailure).AppendLine();
             foreach (RealityRegionSnapshot region in summary.regionRows)
                 builder.Append(region.id).Append('|').Append(region.fidelity).Append('|').Append(region.observationLevel).AppendLine();
             foreach (RealityPopulationSnapshot population in world.PopulationSnapshots())
@@ -120,6 +156,10 @@ namespace DeferredReality.Diagnostics
                     .Append('|').Append(process.record.lastError ?? string.Empty).AppendLine();
             }
             foreach (string line in summary.adjacentLines) builder.Append(line).AppendLine();
+            foreach (RealityOperationRetentionWatermark watermark in world.OperationWatermarkSnapshots())
+                builder.Append("operation-watermark|").Append(watermark.providerId).Append('|').Append(watermark.kind)
+                    .Append('|').Append(watermark.domainId).Append('|').Append(watermark.safeThroughTick)
+                    .Append('|').Append(watermark.proof ?? string.Empty).AppendLine();
             return builder.ToString();
         }
     }
@@ -175,6 +215,13 @@ namespace DeferredReality.Diagnostics
                 if (ticket.status != RealityExcursionStatus.Completed && ticket.originMapUniqueId < 0)
                     report.errors.Add("invalid-excursion-origin=" + ticket.excursionId);
             }
+            foreach (RealityMapCreationIntentRecord intent in world.MapCreationIntentSnapshots())
+            {
+                if (string.IsNullOrEmpty(intent.transactionId) || string.IsNullOrEmpty(intent.providerId))
+                    report.errors.Add("invalid-map-creation-intent=" + (intent.transactionId ?? "null"));
+                else if (!RealityProviderRegistry.TryGet(intent.providerId, out _))
+                    report.warnings.Add("missing-map-creation-provider=" + intent.providerId + "/" + intent.transactionId);
+            }
             return report;
         }
     }
@@ -206,7 +253,7 @@ namespace DeferredReality.Diagnostics
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Providers " + summary.providers + " | Process runs " + summary.totalProcessExecutions +
                 " | Failures " + summary.totalProcessFailures + " | Bounded catch-ups " + summary.boundedCatchups); y += 30f;
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Adjacent maps " + summary.adjacentMaps + " | Excursions " + summary.excursions +
-                " | Construction: " + RealityAdjacentConstructionGuards.RejectionMessage); y += 24f;
+                " | Creation intents " + summary.mapCreationIntents + " | Construction: " + RealityAdjacentConstructionGuards.RejectionMessage); y += 24f;
             foreach (RealityRegionSnapshot region in world.RegionSnapshots())
             {
                 Widgets.Label(new Rect(0f, y, view.width, 22f), region.id + " | " + region.fidelity + " | observed " + region.observationLevel +
@@ -296,6 +343,241 @@ namespace DeferredReality.Diagnostics
             if (world == null) return;
             Log.Message("[DeferredReality][Adjacent eviction]\n" + string.Join("\n",
                 RealityAdjacentSurfaceService.TryEvictWarmMaps(world, world.Now).ToArray()));
+        }
+
+        [DebugAction(Category, "Create and verify Wildlife adjacent site", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void CreateAndVerifyWildlifeAdjacentSite()
+        {
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            Map sourceMap = Find.CurrentMap;
+            if (world == null || sourceMap == null || !DeferredRealityModSettings.Current.enableAdjacentRegions)
+            {
+                Messages.Message("Enable experimental adjacent regions and select a home map first.",
+                    MessageTypeDefOf.RejectInput, false);
+                return;
+            }
+            if (!RealityProviderRegistry.TryGet("lan.wildlife", out _))
+            {
+                Messages.Message("The Wildlife provider is not registered.", MessageTypeDefOf.RejectInput, false);
+                return;
+            }
+            RealityRegionId origin = world.RegisterMap(sourceMap);
+            var neighbors = new List<PlanetTile>();
+            Find.WorldGrid?.GetTileNeighbors(sourceMap.Tile, neighbors);
+            PlanetTile targetTile = neighbors.FirstOrDefault(tile => Find.WorldObjects.ObjectsAt(tile).All(item =>
+                !(item is Settlement) && !(item is MapParent parent && parent.Map != null)));
+            if (!targetTile.Valid)
+            {
+                Messages.Message("No unoccupied neighboring tile is available for the Wildlife verification site.",
+                    MessageTypeDefOf.RejectInput, false);
+                return;
+            }
+            RealityRegionId target = RealityRegionId.Surface((int)targetTile);
+            world.EnsureRegion(target, "Wildlife debug adjacent site", world.Now);
+            world.UpsertPopulation(new RealityPopulationRecord
+            {
+                populationId = "debug:wildlife:" + target,
+                providerId = "lan.wildlife",
+                kind = "wildlife",
+                subjectId = "debug",
+                regionId = target.ToString(),
+                amount = 1f,
+                carryingCapacity = 1f,
+                habitatSuitability = 1f,
+                lastUpdateTick = world.Now
+            });
+            var request = new RealityMaterializationRequest
+            {
+                regionId = target,
+                providerId = "lan.wildlife",
+                reason = "debug-wildlife-adjacent-verification",
+                now = world.Now,
+                adjacentMap = new RealityAdjacentMapMetadata
+                {
+                    providerId = "lan.wildlife",
+                    originRegionId = origin,
+                    originMapUniqueId = sourceMap.uniqueID,
+                    createdTick = world.Now
+                }
+            };
+            RealityTransitionResult result = RealityMaterializationService.TryMaterialize(world, request);
+            bool marked = result.succeeded && result.regionId.IsValid &&
+                world.TryGetRegion(target, out RealityRegionSnapshot snapshot) && snapshot.activeMapUniqueId >= 0 &&
+                world.TryGetAdjacentMapRecord(snapshot.activeMapUniqueId, out RealityAdjacentMapRecord marker) &&
+                marker.providerId == "lan.wildlife" && marker.regionId == target.ToString() &&
+                !world.MapCreationIntentSnapshots().Any(intent => intent.transactionId == marker.transactionId) &&
+                RealityAdjacentConstructionGuards.IsBlocked(Find.Maps.FirstOrDefault(map => map.uniqueID == snapshot.activeMapUniqueId)) &&
+                !RealityAdjacentConstructionGuards.IsBlocked(sourceMap);
+            Log.Message("[DeferredReality][Wildlife adjacent verification] " +
+                (marked ? "PASS" : "FAIL") + "; succeeded=" + result.succeeded + "; error=" + result.error);
+            Messages.Message(marked ? "Wildlife adjacent site created and marked non-buildable." :
+                    "Wildlife adjacent site verification failed; inspect the log and diagnostics.",
+                marked ? MessageTypeDefOf.PositiveEvent : MessageTypeDefOf.RejectInput, false);
+        }
+
+        [DebugAction(Category, "Transfer selected pawn to Wildlife adjacent site", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void TransferSelectedPawnToWildlifeAdjacentSite()
+        {
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            Map sourceMap = Find.CurrentMap;
+            if (world == null || sourceMap == null || world.IsAdjacentMap(sourceMap))
+            {
+                Log.Message("[DeferredReality][Wildlife excursion] FAIL: select an ordinary origin map.");
+                return;
+            }
+            RealityAdjacentMapRecord marker = world.AdjacentMapSnapshots()
+                .Where(item => item.providerId == "lan.wildlife" && item.lifecycle == RealityAdjacentMapLifecycle.Active &&
+                    item.originMapUniqueId == sourceMap.uniqueID)
+                .OrderBy(item => item.mapUniqueId).FirstOrDefault();
+            Map destinationMap = marker == null ? null : Find.Maps?.FirstOrDefault(item => item != null && item.uniqueID == marker.mapUniqueId);
+            Pawn pawn = sourceMap.mapPawns?.AllPawnsSpawned?.Where(item => item != null && item.IsColonistPlayerControlled &&
+                    !item.Downed && !item.InMentalState && !item.Drafted && item.GetLord() == null && item.CarriedBy == null)
+                .OrderBy(item => item.GetUniqueLoadID(), StringComparer.Ordinal).FirstOrDefault();
+            if (marker == null || destinationMap == null || pawn == null ||
+                !RealityRegionId.TryParse(marker.regionId, out RealityRegionId destinationRegion))
+            {
+                Log.Message("[DeferredReality][Wildlife excursion] FAIL: no loaded Wildlife adjacent site or safe player pawn was found.");
+                return;
+            }
+            RealityRegionId originRegion = world.RegisterMap(sourceMap);
+            string identity = RealityDeterminism.Combine(pawn.GetUniqueLoadID(), marker.mapUniqueId.ToString())
+                .ToString(CultureInfo.InvariantCulture);
+            string taskId = "debug:wildlife:task:" + identity;
+            string excursionId = "debug:wildlife:excursion:" + identity;
+            string outboundId = "debug:wildlife:outbound:" + identity;
+            string returnId = "debug:wildlife:return:" + identity;
+            RealityExcursionTicket existing = world.ExcursionSnapshots().FirstOrDefault(item => item.pawnLoadId == pawn.GetUniqueLoadID() &&
+                !RealityRetentionPolicy.IsTerminalExcursion(item));
+            if (existing != null)
+            {
+                bool same = existing.destinationMapUniqueId == destinationMap.uniqueID && existing.originMapUniqueId == sourceMap.uniqueID;
+                Log.Message("[DeferredReality][Wildlife excursion] " + (same ? "PASS" : "FAIL") +
+                    ": the Pawn already has one nonterminal ticket (" + existing.excursionId + ").");
+                return;
+            }
+            string createdExcursionId;
+            string beginDiagnostic;
+            if (!world.BeginExcursion(new RealityExcursionRequest
+            {
+                excursionId = excursionId,
+                providerId = "lan.wildlife",
+                pawnLoadId = pawn.GetUniqueLoadID(),
+                taskId = taskId,
+                originRegionId = originRegion,
+                originMapUniqueId = sourceMap.uniqueID,
+                destinationRegionId = destinationRegion,
+                destinationMapUniqueId = destinationMap.uniqueID,
+                originCell = pawn.Position,
+                inverseReturnEdge = "south",
+                outboundTransferId = outboundId,
+                returnTransferId = returnId,
+                startTick = world.Now,
+                graceDeadline = world.Now + RealityAdjacentPolicy.DefaultGraceTicks
+            }, out createdExcursionId, out beginDiagnostic))
+            {
+                Log.Message("[DeferredReality][Wildlife excursion] FAIL: " + (beginDiagnostic ?? "The excursion could not be started."));
+                return;
+            }
+            string attachDiagnostic;
+            if (!world.AttachExcursion(createdExcursionId, pawn, out attachDiagnostic))
+            {
+                world.CancelPendingExcursion(createdExcursionId);
+                Log.Message("[DeferredReality][Wildlife excursion] FAIL: " + (attachDiagnostic ?? "The excursion Pawn could not be attached."));
+                return;
+            }
+            RealityAdjacentTransferResult transfer = RealityAdjacentSurfaceService.TryTransfer(new RealityAdjacentTransferRequest
+            {
+                providerId = "lan.wildlife",
+                sourceMap = sourceMap,
+                destinationMap = destinationMap,
+                sourceRegionId = originRegion,
+                destinationRegionId = destinationRegion,
+                sourceCell = pawn.Position,
+                entryEdge = "north",
+                pawns = new[] { pawn },
+                transferId = outboundId,
+                excursionId = createdExcursionId,
+                providerTaskId = taskId,
+                isOutboundExcursion = true
+            });
+            bool passed = transfer.succeeded && pawn.Spawned && pawn.Map == destinationMap &&
+                world.TryGetExcursion(createdExcursionId, out RealityExcursionTicket ticket) &&
+                ticket.pawnLoadId == pawn.GetUniqueLoadID() && ticket.originMapUniqueId == sourceMap.uniqueID &&
+                ticket.destinationMapUniqueId == destinationMap.uniqueID;
+            Log.Message("[DeferredReality][Wildlife excursion] " + (passed ? "PASS" : "FAIL") +
+                "; exactPawn=" + (pawn.Map == destinationMap) + "; ticket=" + createdExcursionId +
+                "; diagnostic=" + (transfer.diagnostic ?? string.Empty));
+        }
+
+        [DebugAction(Category, "Heartbeat selected Wildlife excursion", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void HeartbeatSelectedWildlifeExcursion()
+        {
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            RealityExcursionTicket ticket = world?.ExcursionSnapshots().FirstOrDefault(item => item.providerId == "lan.wildlife" &&
+                !RealityRetentionPolicy.IsTerminalExcursion(item));
+            bool passed = ticket != null && world.HeartbeatExcursion(ticket.excursionId, world.Now,
+                RealityAdjacentPolicy.DefaultLeaseTicks, "Debug integration heartbeat.");
+            Log.Message("[DeferredReality][Wildlife heartbeat] " + (passed ? "PASS" : "FAIL") +
+                "; task=" + (ticket?.taskId ?? "none"));
+        }
+
+        [DebugAction(Category, "Complete and return selected Wildlife excursion", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void CompleteAndReturnSelectedWildlifeExcursion()
+        {
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            RealityExcursionTicket ticket = world?.ExcursionSnapshots().FirstOrDefault(item => item.providerId == "lan.wildlife" &&
+                !RealityRetentionPolicy.IsTerminalExcursion(item));
+            if (ticket == null)
+            {
+                Log.Message("[DeferredReality][Wildlife return] FAIL: no nonterminal Wildlife excursion ticket exists.");
+                return;
+            }
+            bool requested = world.CompleteExcursion(ticket.excursionId, "Debug integration task completed.");
+            RealityAdjacentSurfaceService.Monitor(world, world.Now);
+            RealityAdjacentSurfaceService.Monitor(world, world.Now);
+            world.TryGetExcursion(ticket.excursionId, out RealityExcursionTicket after);
+            Pawn pawn = Find.Maps?.SelectMany(map => map?.mapPawns?.AllPawnsSpawned ?? Enumerable.Empty<Pawn>())
+                .FirstOrDefault(item => item?.GetUniqueLoadID() == ticket.pawnLoadId);
+            int completedReturnJournals = world.TransferJournalSnapshots().Count(journal => journal != null &&
+                journal.transferId == ticket.returnTransferId && journal.status == RealityTransferStatus.Completed);
+            bool passed = requested && after != null && RealityRetentionPolicy.IsTerminalExcursion(after) &&
+                pawn?.Map?.uniqueID == ticket.originMapUniqueId && completedReturnJournals == 1;
+            Log.Message("[DeferredReality][Wildlife return] " + (passed ? "PASS" : "DEFERRED") +
+                "; requested=" + requested + "; exactOrigin=" + (pawn?.Map?.uniqueID == ticket.originMapUniqueId) +
+                "; completedReturnJournals=" + completedReturnJournals +
+                "; diagnostic=" + (after?.diagnostic ?? string.Empty));
+        }
+
+        [DebugAction(Category, "Run adjacent release-readiness checklist", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        public static void RunAdjacentReleaseReadinessChecklist()
+        {
+            DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
+            Map ordinaryMap = world == null ? null : Find.Maps?.FirstOrDefault(map => map != null && !world.IsAdjacentMap(map));
+            var checks = new List<string>();
+            Action<bool, string> check = (passed, name) => checks.Add((passed ? "PASS: " : "FAIL: ") + name);
+            check(world != null, "world component exists");
+            if (world != null)
+            {
+                IReadOnlyList<RealityAdjacentMapRecord> markers = world.AdjacentMapSnapshots();
+                check(markers.All(marker => marker.providerId == "lan.wildlife" || marker.providerId.Length > 0),
+                    "adjacent markers have explicit owners");
+                check(markers.Where(marker => marker.lifecycle == RealityAdjacentMapLifecycle.Active).All(marker =>
+                    Find.Maps?.Any(map => map != null && map.uniqueID == marker.mapUniqueId && RealityAdjacentConstructionGuards.IsBlocked(map)) == true),
+                    "active adjacent maps are non-buildable");
+                check(ordinaryMap == null || !RealityAdjacentConstructionGuards.IsBlocked(ordinaryMap),
+                    "ordinary maps remain buildable");
+                check(world.ExcursionSnapshots().Where(ticket => !RealityRetentionPolicy.IsTerminalExcursion(ticket))
+                    .GroupBy(ticket => ticket.pawnLoadId, StringComparer.Ordinal).All(group => group.Count() == 1),
+                    "nonterminal Pawn ownership is unique");
+                check(!world.HasAdjacentSafetyWork || world.AdjacentMapSnapshots().Any(marker => marker.lifecycle != RealityAdjacentMapLifecycle.Retired) ||
+                    world.ExcursionSnapshots().Any(ticket => !RealityRetentionPolicy.IsTerminalExcursion(ticket)) ||
+                    world.MapCreationIntentSnapshots().Count > 0,
+                    "historical terminal tickets do not alone keep monitoring active");
+            }
+            Log.Message("[DeferredReality][Adjacent release checklist]\n" + string.Join("\n", checks.ToArray()) +
+                "\nMANUAL: save resident -> reload -> heartbeat/complete -> save during return -> reload -> run monitor twice -> evict empty site." +
+                "\nMANUAL: attempt build/wall/furniture/floor/install/blueprint/frame on the marked map; verify rejection." +
+                "\nPURE: same-tile claims, partial Prepare rollback, watermark retention, and provider isolation are covered by DeferredReality.PureTests.");
         }
 
         private static void Simulate(int ticks)

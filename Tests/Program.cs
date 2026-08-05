@@ -27,7 +27,9 @@ namespace DeferredReality.PureTests
                 PauseCauseTransitions();
                 RetentionSelection();
                 TransitionCompensationSeams();
+                PartialPrepareRollbackAndRetention();
                 MapIdentityClaims();
+                MapCreationIntentBoundaries();
                 ConstraintDomainsAndFacets();
                 DuplicateRepairSemantics();
                 SaveCompatibleDefaults();
@@ -85,6 +87,13 @@ namespace DeferredReality.PureTests
             Require(RealityMapFactoryRegistry.Unregister("pure.first", first), "first factory did not unregister");
             Require(!RealityMapFactoryRegistry.TryGet("pure.first", out _), "unregistered factory remained visible");
             RealityMapFactoryRegistry.Unregister("pure.second", second);
+            var fallback = new TestFactory();
+            RealityMapFactoryRegistry.Factory = fallback;
+            Require(!RealityMapFactoryRegistry.TryGetScoped("missing", out _),
+                "provider-scoped factory resolution used the legacy fallback");
+            Require(RealityMapFactoryRegistry.TryGet("missing", out IRealityMapFactory fallbackResolved) &&
+                ReferenceEquals(fallback, fallbackResolved), "legacy fallback behavior changed");
+            RealityMapFactoryRegistry.Factory = null;
         }
 
         private static void SchedulerGateAndOrdering()
@@ -226,6 +235,10 @@ namespace DeferredReality.PureTests
             Require(!RealityAdjacentPolicy.IsSafeIdleJob("Hunt", true, false, false, false, false, false, false) &&
                 !RealityAdjacentPolicy.IsSafeIdleJob("Wait", true, false, false, false, false, true, false),
                 "meaningful or carried jobs were classified as safe idle");
+            Require(RealityAdjacentPolicy.IsFreshTaskEvidence(950, 1000) &&
+                !RealityAdjacentPolicy.IsFreshTaskEvidence(1100, 1000) &&
+                !RealityAdjacentPolicy.IsFreshTaskEvidence(1, 10000),
+                "task lease evidence accepted future or stale observations");
             ticket.status = RealityExcursionStatus.Returning;
             ticket.retryTick = 0;
             Require(!RealityAdjacentPolicy.IsReturnDue(ticket, 101, false, true, false, true),
@@ -237,6 +250,10 @@ namespace DeferredReality.PureTests
             ticket.status = RealityExcursionStatus.Completed;
             Require(!RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, 2),
                 "completed excursion continued to block its maps");
+            ticket.status = RealityExcursionStatus.Cancelled;
+            ticket.terminalTick = -1;
+            Require(RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, 2),
+                "cancelled excursion awaiting exact return stopped blocking its maps");
         }
 
         private static void ThreadGuardDoesNotSelfInitialize()
@@ -263,8 +280,8 @@ namespace DeferredReality.PureTests
                 {
                     foreach (FakeStageProvider provider in new[] { first, second })
                     {
-                        provider.Prepare();
                         prepared.Add(provider);
+                        provider.Prepare();
                     }
                     if (failure != "prepare") throw new InvalidOperationException(failure);
                 }
@@ -272,7 +289,7 @@ namespace DeferredReality.PureTests
                 {
                     foreach (FakeStageProvider provider in RealityTransitionPolicy.ReversePrepared(prepared)) provider.Rollback();
                 }
-                Require(first.RollbackCount == (failure == "prepare" ? 0 : 1), "prepare failure rollback set was incorrect");
+                Require(first.RollbackCount == 1, "prepare-started provider was not included in rollback");
                 Require(second.RollbackCount == (failure == "prepare" ? 0 : 1), "" + failure + " did not rollback prepared providers");
                 Require(second.RollbackOrder < first.RollbackOrder || first.RollbackOrder == 0,
                     "rollback order was not reverse deterministic");
@@ -284,6 +301,95 @@ namespace DeferredReality.PureTests
                 "compression/provider selection escaped its owner scope");
             Require(RealityTransitionPolicy.SelectOwner(owners, "missing", item => item, item => 0).Count == 0,
                 "missing ownership did not fail closed");
+        }
+
+        private static void PartialPrepareRollbackAndRetention()
+        {
+            var partial = new FakeStageProvider("partial", true, true);
+            string original = null;
+            var rollbackErrors = new List<string>();
+            try { partial.Prepare(); }
+            catch (Exception exception) { original = exception.Message; }
+            try { partial.Rollback(); }
+            catch (Exception exception) { rollbackErrors.Add(exception.Message); }
+            try { partial.Rollback(); }
+            catch (Exception exception) { rollbackErrors.Add(exception.Message); }
+            Require(original == "prepare failure" && rollbackErrors.Count == 2 && partial.PrepareStarted,
+                "partial preparation did not preserve the original and rollback failures");
+
+            var registration = new RealityProviderRegistration
+            {
+                providerId = "retention",
+                operationRetentionTicks = 100,
+                compactableOperationKinds = new List<string> { "demography", "transfer" }
+            };
+            var operation = new RealityAppliedOperation
+            {
+                operationId = "op", providerId = "retention", kind = "demography", domainId = "population:1", tick = 100
+            };
+            Require(!RealityRetentionPolicy.CanExpireOperation(registration, operation,
+                    Array.Empty<RealityOperationRetentionWatermark>(), 300),
+                "operation age alone established replay safety");
+            Require(RealityRetentionPolicy.CanExpireOperation(registration, operation, new[]
+            {
+                new RealityOperationRetentionWatermark
+                {
+                    providerId = "retention", kind = "demography", domainId = "population:1",
+                    safeThroughTick = 150, proof = "durable-population-watermark"
+                }
+            }, 300), "a proven operation watermark did not permit safe expiry");
+            Require(!RealityRetentionPolicy.CanExpireOperation(registration, operation, new[]
+            {
+                new RealityOperationRetentionWatermark
+                {
+                    providerId = "retention", kind = "demography", domainId = "population:2",
+                    safeThroughTick = 300, proof = "wrong-domain"
+                }
+            }, 300), "a watermark for another operation domain expired a marker");
+            var transferOperation = new RealityAppliedOperation
+            {
+                operationId = "transfer-op", providerId = "retention", kind = "transfer",
+                domainId = "population:1->population:2", tick = 100
+            };
+            Require(RealityRetentionPolicy.CanExpireOperation(registration, transferOperation, new[]
+            {
+                new RealityOperationRetentionWatermark
+                {
+                    providerId = "retention", kind = "transfer", domainId = "population:1->population:2",
+                    safeThroughTick = 150, proof = "durable-transfer-watermark"
+                }
+            }, 300), "a proven transfer watermark did not permit safe expiry");
+
+            var excursions = RealityRetentionPolicy.SelectExcursions(new[]
+            {
+                new RealityExcursionTicket { excursionId = "active", status = RealityExcursionStatus.Returning },
+                new RealityExcursionTicket { excursionId = "old", status = RealityExcursionStatus.Completed, terminalTick = 1 },
+                new RealityExcursionTicket { excursionId = "new", status = RealityExcursionStatus.Completed, terminalTick = 950 },
+                new RealityExcursionTicket { excursionId = "cancel-pending", status = RealityExcursionStatus.Cancelled, terminalTick = -1 }
+            }, 1000, 100, 1);
+            Require(excursions.Count == 3 && excursions.Any(item => item.excursionId == "active") &&
+                excursions.Any(item => item.excursionId == "cancel-pending") &&
+                excursions.Any(item => item.excursionId == "new"), "terminal excursion retention was not bounded safely");
+            var retired = RealityRetentionPolicy.SelectRetiredAdjacentMaps(new[]
+            {
+                new RealityAdjacentMapRecord { mapUniqueId = 1, lifecycle = RealityAdjacentMapLifecycle.Retired, retiredTick = 1 },
+                new RealityAdjacentMapRecord { mapUniqueId = 2, lifecycle = RealityAdjacentMapLifecycle.Retired, retiredTick = 950 },
+                new RealityAdjacentMapRecord { mapUniqueId = 3, lifecycle = RealityAdjacentMapLifecycle.Active }
+            }, 1000, 100, 1);
+            Require(retired.Count == 2 && retired.Any(item => item.mapUniqueId == 2) && retired.Any(item => item.mapUniqueId == 3),
+                "retired adjacent-map history was not retained deterministically");
+            IReadOnlyList<string> firstEviction = RealityAdjacentPolicy.SelectWarmEvictions(new[]
+            {
+                new KeyValuePair<string, long>("a", 10), new KeyValuePair<string, long>("b", 20),
+                new KeyValuePair<string, long>("c", 10)
+            }, 1);
+            IReadOnlyList<string> secondEviction = RealityAdjacentPolicy.SelectWarmEvictions(new[]
+            {
+                new KeyValuePair<string, long>("c", 10), new KeyValuePair<string, long>("a", 10),
+                new KeyValuePair<string, long>("b", 20)
+            }, 1);
+            Require(firstEviction.SequenceEqual(secondEviction) && firstEviction[0] == "a",
+                "eviction ordering changed with dictionary/input enumeration order");
         }
 
         private static void MapIdentityClaims()
@@ -308,6 +414,48 @@ namespace DeferredReality.PureTests
             Require(RealityMapIdentityPolicy.TrySelectClaim(new[] { new RealityMapIdentityClaim
                 { providerId = "owner.a", regionId = surface, identityKey = "layer=surface" } }, out _, out _),
                 "a distinct explicit same-tile identity was rejected");
+        }
+
+        private static void MapCreationIntentBoundaries()
+        {
+            RealityRegionId surface = RealityRegionId.Surface(7);
+            var claim = new RealityMapIdentityClaim
+            {
+                providerId = "lan.wildlife", regionId = surface, identityKey = "wildlife:surface:7"
+            };
+            Require(RealityMapCreationPolicy.IsOwnerClaimCompatible(surface, "lan.wildlife", claim),
+                "core surface region could not be owned by an explicit Wildlife adjacent site");
+            var intent = new RealityMapCreationIntentRecord
+            {
+                transactionId = "materialize:test",
+                providerId = "lan.wildlife",
+                regionId = surface.ToString(),
+                originRegionId = RealityRegionId.Surface(6).ToString(),
+                originMapUniqueId = 6,
+                createdMapUniqueId = 77,
+                preexistingMapUniqueId = -1,
+                createdTick = 10
+            };
+            Require(RealityMapCreationPolicy.CanClassifyMap(false, false, intent.transactionId, -1, 77),
+                "a newly generated map was not eligible for intent classification");
+            Require(!RealityMapCreationPolicy.CanClassifyMap(true, false, intent.transactionId, -1, 77),
+                "an existing ordinary map could be reclassified by an intent");
+            Require(!RealityMapCreationPolicy.CanClassifyMap(false, false, intent.transactionId, 77, 78),
+                "a map with a different bound identity was accepted by an intent");
+            var marker = new RealityAdjacentMapRecord
+            {
+                transactionId = intent.transactionId, mapUniqueId = 77
+            };
+            Require(RealityMapCreationPolicy.ShouldClearAfterLoad(intent, marker),
+                "save/load did not resolve a committed creation intent");
+            marker.mapUniqueId = 78;
+            Require(!RealityMapCreationPolicy.ShouldClearAfterLoad(intent, marker),
+                "save/load cleared an intent for a different map");
+            intent.createdMapUniqueId = -1;
+            Require(!RealityMapCreationPolicy.ShouldClearAfterLoad(intent, new RealityAdjacentMapRecord
+            {
+                transactionId = intent.transactionId, mapUniqueId = 77
+            }), "an unbound creation intent was cleared by load repair");
         }
 
         private static void ConstraintDomainsAndFacets()
@@ -365,24 +513,29 @@ namespace DeferredReality.PureTests
         private sealed class FakeStageProvider
         {
             private readonly bool failPrepare;
+            private readonly bool failRollback;
             public readonly string Id;
             public int RollbackCount;
             public int RollbackOrder;
+            public bool PrepareStarted { get; private set; }
             private static int nextRollbackOrder;
 
-            public FakeStageProvider(string id, bool failPrepare)
+            public FakeStageProvider(string id, bool failPrepare, bool failRollback = false)
             {
                 Id = id;
                 this.failPrepare = failPrepare;
+                this.failRollback = failRollback;
             }
 
             public void Prepare()
             {
+                PrepareStarted = true;
                 if (failPrepare) throw new InvalidOperationException("prepare failure");
             }
 
             public void Rollback()
             {
+                if (failRollback) throw new InvalidOperationException("rollback failure");
                 RollbackCount++;
                 RollbackOrder = ++nextRollbackOrder;
             }

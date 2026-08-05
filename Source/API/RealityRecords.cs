@@ -575,6 +575,8 @@ namespace DeferredReality.API
     {
         public string operationId;
         public string providerId;
+        /// <summary>Optional provider-defined replay domain; null keeps the marker durable.</summary>
+        public string domainId;
         public long tick;
         public string kind;
         public int schemaVersion = 1;
@@ -584,12 +586,38 @@ namespace DeferredReality.API
         {
             Scribe_Values.Look(ref operationId, "operationId");
             Scribe_Values.Look(ref providerId, "providerId");
+            Scribe_Values.Look(ref domainId, "domainId");
             Scribe_Values.Look(ref tick, "tick");
             Scribe_Values.Look(ref kind, "kind");
             Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
         }
 
         internal RealityAppliedOperation Clone() => (RealityAppliedOperation)MemberwiseClone();
+    }
+
+    /// <summary>Provider proof that exactly-once markers in one domain cannot legitimately replay before this tick.</summary>
+    public sealed class RealityOperationRetentionWatermark : IExposable
+    {
+        public int schemaVersion = 1;
+        public string providerId;
+        public string kind;
+        public string domainId;
+        public long safeThroughTick = -1;
+        public long updatedTick;
+        public string proof;
+
+        public void ExposeData()
+        {
+            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            Scribe_Values.Look(ref providerId, "providerId");
+            Scribe_Values.Look(ref kind, "kind");
+            Scribe_Values.Look(ref domainId, "domainId");
+            Scribe_Values.Look(ref safeThroughTick, "safeThroughTick", -1);
+            Scribe_Values.Look(ref updatedTick, "updatedTick");
+            Scribe_Values.Look(ref proof, "proof");
+        }
+
+        internal RealityOperationRetentionWatermark Clone() => (RealityOperationRetentionWatermark)MemberwiseClone();
     }
 
     /// <summary>Explicit conflict report retained for diagnostics and future resolution.</summary>
@@ -657,12 +685,14 @@ namespace DeferredReality.API
     {
         public int schemaVersion = 1;
         public int mapUniqueId = -1;
+        public string transactionId;
         public string providerId;
         public string regionId;
         public string originRegionId;
         public int originMapUniqueId = -1;
         public long createdTick;
         public long lastAccessTick;
+        public long retiredTick = -1;
         public RealityAdjacentMapLifecycle lifecycle = RealityAdjacentMapLifecycle.Materializing;
         public string diagnostic;
 
@@ -670,17 +700,52 @@ namespace DeferredReality.API
         {
             Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref mapUniqueId, "mapUniqueId", -1);
+            Scribe_Values.Look(ref transactionId, "transactionId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref regionId, "regionId");
             Scribe_Values.Look(ref originRegionId, "originRegionId");
             Scribe_Values.Look(ref originMapUniqueId, "originMapUniqueId", -1);
             Scribe_Values.Look(ref createdTick, "createdTick");
             Scribe_Values.Look(ref lastAccessTick, "lastAccessTick");
+            Scribe_Values.Look(ref retiredTick, "retiredTick", -1);
             Scribe_Values.Look(ref lifecycle, "lifecycle", RealityAdjacentMapLifecycle.Materializing);
             Scribe_Values.Look(ref diagnostic, "diagnostic");
         }
 
         internal RealityAdjacentMapRecord Clone() => (RealityAdjacentMapRecord)MemberwiseClone();
+    }
+
+    /// <summary>Save-safe authorization for one materialization transaction to classify one newly created map.</summary>
+    public sealed class RealityMapCreationIntentRecord : IExposable
+    {
+        public int schemaVersion = 1;
+        public string transactionId;
+        public string providerId;
+        public string regionId;
+        public string originRegionId;
+        public int originMapUniqueId = -1;
+        public int preexistingMapUniqueId = -1;
+        public int createdMapUniqueId = -1;
+        public long createdTick;
+        public RealityAdjacentMapLifecycle lifecycle = RealityAdjacentMapLifecycle.Materializing;
+        public string diagnostic;
+
+        public void ExposeData()
+        {
+            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            Scribe_Values.Look(ref transactionId, "transactionId");
+            Scribe_Values.Look(ref providerId, "providerId");
+            Scribe_Values.Look(ref regionId, "regionId");
+            Scribe_Values.Look(ref originRegionId, "originRegionId");
+            Scribe_Values.Look(ref originMapUniqueId, "originMapUniqueId", -1);
+            Scribe_Values.Look(ref preexistingMapUniqueId, "preexistingMapUniqueId", -1);
+            Scribe_Values.Look(ref createdMapUniqueId, "createdMapUniqueId", -1);
+            Scribe_Values.Look(ref createdTick, "createdTick");
+            Scribe_Values.Look(ref lifecycle, "lifecycle", RealityAdjacentMapLifecycle.Materializing);
+            Scribe_Values.Look(ref diagnostic, "diagnostic");
+        }
+
+        internal RealityMapCreationIntentRecord Clone() => (RealityMapCreationIntentRecord)MemberwiseClone();
     }
 
     /// <summary>Durable ownership and return lease for one pawn excursion.</summary>
@@ -690,6 +755,7 @@ namespace DeferredReality.API
         public string excursionId;
         public string providerId;
         public string pawnLoadId;
+        public string taskId;
         public string originRegionId;
         public int originMapUniqueId = -1;
         public string destinationRegionId;
@@ -703,6 +769,7 @@ namespace DeferredReality.API
         public long graceDeadline;
         public long lastTaskHeartbeat;
         public long retryTick;
+        public long terminalTick = -1;
         public RealityExcursionStatus status = RealityExcursionStatus.Active;
         public string diagnostic;
 
@@ -712,6 +779,7 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref excursionId, "excursionId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref pawnLoadId, "pawnLoadId");
+            Scribe_Values.Look(ref taskId, "taskId");
             Scribe_Values.Look(ref originRegionId, "originRegionId");
             Scribe_Values.Look(ref originMapUniqueId, "originMapUniqueId", -1);
             Scribe_Values.Look(ref destinationRegionId, "destinationRegionId");
@@ -725,11 +793,39 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref graceDeadline, "graceDeadline");
             Scribe_Values.Look(ref lastTaskHeartbeat, "lastTaskHeartbeat");
             Scribe_Values.Look(ref retryTick, "retryTick");
+            Scribe_Values.Look(ref terminalTick, "terminalTick", -1);
             Scribe_Values.Look(ref status, "status", RealityExcursionStatus.Active);
             Scribe_Values.Look(ref diagnostic, "diagnostic");
         }
 
         internal RealityExcursionTicket Clone() => (RealityExcursionTicket)MemberwiseClone();
+    }
+
+    /// <summary>Bounded diagnostic history for adjacent monitoring and eviction decisions.</summary>
+    public sealed class RealityAdjacentDiagnosticRecord : IExposable
+    {
+        public int schemaVersion = 1;
+        public string diagnosticId;
+        public string kind;
+        public string providerId;
+        public string mapOrExcursionId;
+        public long detectedTick;
+        public long resolvedTick = -1;
+        public string message;
+
+        public void ExposeData()
+        {
+            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            Scribe_Values.Look(ref diagnosticId, "diagnosticId");
+            Scribe_Values.Look(ref kind, "kind");
+            Scribe_Values.Look(ref providerId, "providerId");
+            Scribe_Values.Look(ref mapOrExcursionId, "mapOrExcursionId");
+            Scribe_Values.Look(ref detectedTick, "detectedTick");
+            Scribe_Values.Look(ref resolvedTick, "resolvedTick", -1);
+            Scribe_Values.Look(ref message, "message");
+        }
+
+        internal RealityAdjacentDiagnosticRecord Clone() => (RealityAdjacentDiagnosticRecord)MemberwiseClone();
     }
 
     /// <summary>Save-safe journal for an interrupted adjacent-region transfer.</summary>
@@ -739,6 +835,7 @@ namespace DeferredReality.API
         public string transferId;
         public string providerId;
         public string excursionId;
+        public string providerTaskId;
         public string sourceRegionId;
         public string destinationRegionId;
         public int sourceMapUniqueId = -1;
@@ -759,6 +856,7 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref transferId, "transferId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref excursionId, "excursionId");
+            Scribe_Values.Look(ref providerTaskId, "providerTaskId");
             Scribe_Values.Look(ref sourceRegionId, "sourceRegionId");
             Scribe_Values.Look(ref destinationRegionId, "destinationRegionId");
             Scribe_Values.Look(ref sourceMapUniqueId, "sourceMapUniqueId", -1);

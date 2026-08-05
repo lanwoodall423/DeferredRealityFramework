@@ -30,7 +30,7 @@ namespace DeferredReality.Aquaculture
                 RealityProviderCapability.Processes | RealityProviderCapability.Observations | RealityProviderCapability.Diagnostics,
             // Event IDs are stable for the source catch/release and cannot legitimately replay after this window.
             operationRetentionTicks = 3600000L,
-            compactableOperationKinds = new List<string> { "consume", "release", "active-map-reconcile" }
+            compactableOperationKinds = new List<string> { "consume", "release", "active-map-reconcile", "demography", "transfer" }
         };
 
         public void OnRegistered(RealityProviderContext context)

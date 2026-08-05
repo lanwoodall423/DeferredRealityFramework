@@ -9,6 +9,12 @@ namespace DeferredReality.API
     {
         public const long DefaultTerminalTransferRetentionTicks = 600000L;
         public const int MaximumTerminalTransferJournals = 256;
+        public const long DefaultTerminalExcursionRetentionTicks = 600000L;
+        public const int MaximumTerminalExcursions = 1024;
+        public const long DefaultRetiredAdjacentMapRetentionTicks = 600000L;
+        public const int MaximumRetiredAdjacentMaps = 256;
+        public const long DefaultResolvedAdjacentDiagnosticRetentionTicks = 600000L;
+        public const int MaximumResolvedAdjacentDiagnostics = 2048;
 
         public static bool IsInterruptedTransfer(RealityTransferJournalRecord journal)
         {
@@ -62,6 +68,81 @@ namespace DeferredReality.API
             return now - appliedTick >= registration.operationRetentionTicks;
         }
 
+        /// <summary>Operation age is insufficient by itself; a matching persisted watermark must prove replay is impossible.</summary>
+        public static bool CanExpireOperation(RealityProviderRegistration registration, RealityAppliedOperation operation,
+            IEnumerable<RealityOperationRetentionWatermark> watermarks, long now)
+        {
+            if (operation == null || !CanExpireOperation(registration, operation.kind, operation.tick, now) ||
+                string.IsNullOrEmpty(operation.domainId)) return false;
+            return (watermarks ?? Enumerable.Empty<RealityOperationRetentionWatermark>()).Any(watermark =>
+                watermark != null && watermark.providerId == operation.providerId && watermark.kind == operation.kind &&
+                watermark.domainId == operation.domainId && watermark.safeThroughTick >= operation.tick);
+        }
+
+        public static bool IsTerminalExcursion(RealityExcursionTicket ticket)
+        {
+            return ticket != null && (ticket.status == RealityExcursionStatus.Completed ||
+                (ticket.status == RealityExcursionStatus.Cancelled && ticket.terminalTick >= 0));
+        }
+
+        /// <summary>Retains all recoverable tickets and deterministic recent terminal history.</summary>
+        public static IReadOnlyList<RealityExcursionTicket> SelectExcursions(IEnumerable<RealityExcursionTicket> tickets,
+            long now, long retentionTicks = DefaultTerminalExcursionRetentionTicks,
+            int terminalCap = MaximumTerminalExcursions)
+        {
+            List<RealityExcursionTicket> unique = (tickets ?? Enumerable.Empty<RealityExcursionTicket>())
+                .Where(ticket => ticket != null && !string.IsNullOrEmpty(ticket.excursionId))
+                .GroupBy(ticket => ticket.excursionId, StringComparer.Ordinal)
+                .Select(group => group.OrderBy(ticket => IsTerminalExcursion(ticket) ? 1 : 0)
+                    .ThenByDescending(TerminalTick).ThenBy(ticket => ticket.providerId, StringComparer.Ordinal).First())
+                .ToList();
+            List<RealityExcursionTicket> recoverable = unique.Where(ticket => !IsTerminalExcursion(ticket)).ToList();
+            long age = Math.Max(0L, retentionTicks);
+            List<RealityExcursionTicket> terminal = unique.Where(IsTerminalExcursion)
+                .Where(ticket => TerminalTick(ticket) > now || now - TerminalTick(ticket) < age)
+                .OrderByDescending(TerminalTick).ThenBy(ticket => ticket.excursionId, StringComparer.Ordinal)
+                .Take(Math.Max(0, terminalCap)).ToList();
+            return recoverable.Concat(terminal).OrderBy(ticket => ticket.excursionId, StringComparer.Ordinal).ToList();
+        }
+
+        public static IReadOnlyList<RealityAdjacentMapRecord> SelectRetiredAdjacentMaps(
+            IEnumerable<RealityAdjacentMapRecord> records, long now,
+            long retentionTicks = DefaultRetiredAdjacentMapRetentionTicks,
+            int terminalCap = MaximumRetiredAdjacentMaps)
+        {
+            long age = Math.Max(0L, retentionTicks);
+            IEnumerable<RealityAdjacentMapRecord> source = records ?? Enumerable.Empty<RealityAdjacentMapRecord>();
+            List<RealityAdjacentMapRecord> live = source.Where(record => record != null &&
+                record.lifecycle != RealityAdjacentMapLifecycle.Retired).ToList();
+            List<RealityAdjacentMapRecord> retired = source.Where(record => record != null &&
+                    record.lifecycle == RealityAdjacentMapLifecycle.Retired &&
+                    (record.retiredTick > now || now - record.retiredTick < age))
+                .OrderByDescending(record => record.retiredTick).ThenBy(record => record.mapUniqueId)
+                .Take(Math.Max(0, terminalCap)).ToList();
+            return live.Concat(retired).OrderBy(record => record.mapUniqueId).ToList();
+        }
+
+        public static IReadOnlyList<RealityAdjacentDiagnosticRecord> SelectResolvedAdjacentDiagnostics(
+            IEnumerable<RealityAdjacentDiagnosticRecord> records, long now,
+            long retentionTicks = DefaultResolvedAdjacentDiagnosticRetentionTicks,
+            int terminalCap = MaximumResolvedAdjacentDiagnostics)
+        {
+            long age = Math.Max(0L, retentionTicks);
+            List<RealityAdjacentDiagnosticRecord> unresolved = (records ?? Enumerable.Empty<RealityAdjacentDiagnosticRecord>())
+                .Where(record => record != null && record.resolvedTick < 0).ToList();
+            List<RealityAdjacentDiagnosticRecord> resolved = (records ?? Enumerable.Empty<RealityAdjacentDiagnosticRecord>())
+                .Where(record => record != null && record.resolvedTick >= 0 &&
+                    (record.resolvedTick > now || now - record.resolvedTick < age))
+                .OrderByDescending(record => record.resolvedTick).ThenBy(record => record.diagnosticId, StringComparer.Ordinal)
+                .Take(Math.Max(0, terminalCap)).ToList();
+            return unresolved.Concat(resolved).OrderBy(record => record.diagnosticId, StringComparer.Ordinal).ToList();
+        }
+
+        private static long TerminalTick(RealityExcursionTicket ticket)
+        {
+            return ticket == null ? long.MinValue : ticket.terminalTick >= 0 ? ticket.terminalTick : ticket.lastTaskHeartbeat;
+        }
+
         /// <summary>Finds the deterministic oldest observation without sorting the full history.</summary>
         public static RealityObservationRecord FindOldestObservation(IEnumerable<RealityObservationRecord> observations)
         {
@@ -87,8 +168,12 @@ namespace DeferredReality.API
         public int appliedOperationsRemoved;
         public int cancelledProcessesRemoved;
         public int mapAliasesRemoved;
+        public int excursionsRemoved;
+        public int retiredAdjacentMapsRemoved;
+        public int adjacentDiagnosticsRemoved;
 
         public int TotalRemoved => quarantineRemoved + conflictsRemoved + observationsRemoved + transferJournalsRemoved +
-            appliedOperationsRemoved + cancelledProcessesRemoved + mapAliasesRemoved;
+            appliedOperationsRemoved + cancelledProcessesRemoved + mapAliasesRemoved + excursionsRemoved +
+            retiredAdjacentMapsRemoved + adjacentDiagnosticsRemoved;
     }
 }

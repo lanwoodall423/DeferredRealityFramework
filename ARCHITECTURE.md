@@ -114,6 +114,22 @@ conflicting provider claims are quarantined and left unclaimed rather than
 overwriting `activeMapUniqueId`. The Harmony map-finalization postfix is the sole
 map readiness path.
 
+Region identity and adjacent ownership are intentionally separate. `RealityRegionId`
+describes the represented region, including its namespace; an adjacent marker's
+`providerId` names the integration responsible for the temporary site, transfer
+host, construction policy, and eviction. A shared `core` surface region can
+therefore be a Wildlife-owned adjacent site without rewriting its region ID.
+
+Materialization creates a save-safe, transaction-scoped map-creation intent before
+the host factory starts generation. It records the expected region, owner, origin,
+transaction, pre-existing tile map, and returned map ID. Every map registration
+caller, including provider map components and the single `Map.FinalizeInit`
+postfix, uses the same intent-aware registration path. Only a map with a matching
+provider identity claim and newly-created identity can be classified; persisted
+aliases, live-map collisions, stale intents, and conflicting intents fail closed.
+The intent is cleared on commit, rollback, and load repair, while unresolved
+creation records remain inspectable and prevent ordinary projection assumptions.
+
 Constraint conflicts use explicit `conflictDomainKeys` and `conflictFacetKeys`.
 Only intersecting domains with incompatible semantics conflict. Legacy records
 fall back to provider/type plus affected subject, facet, or region, never subject
@@ -158,7 +174,8 @@ share Wildlife state.
 ## Adjacent excursion boundary
 
 An adjacent map is an explicit, typed temporary-site role. Its marker records the
-provider, stable region, origin region/map, creation/access ticks, and lifecycle;
+separate owner/provider and stable represented region, origin region/map,
+creation/access ticks, transaction identity, and lifecycle;
 it is applied after map generation so ordinary generation is not constrained by
 the construction policy. `WildlifeDeferredMapParent` supplies the provider-scoped
 region identity used by map claims. Marked maps are hard non-buildable work sites:
@@ -191,3 +208,20 @@ the live map and ticket until the same scoped transfer host is registered again.
 Warm eviction is not a general-purpose map cache: dropping a reference is never
 eviction, and the adjacent feature remains experimental until the live acceptance
 suite passes.
+
+Applied-operation and transfer-journal writes only mark storage maintenance dirty.
+The world runs a deterministic coarse pass at the maintenance deadline or mutation
+threshold, while save and post-load repair force the pass. Exactly-once expiry
+requires a provider/kind/domain watermark proving replay is impossible; age and
+retention metadata alone never remove recurring demography, transfer, consume,
+release, or active-map-reconcile markers. Terminal excursions, retired markers,
+and resolved diagnostics use documented age/cap policies and preserve recovery
+references. Diagnostics expose active versus historical tickets, task heartbeats,
+maintenance state, watermark proofs, access ticks, compaction totals, and recent
+partial-prepare rollback failures.
+
+Wildlife has no reliable Herds completion callback. Its task provider therefore
+offers explicit heartbeat/completion/abandon hooks and emits bounded fresh evidence
+from observable trail/Pawn state. Repeated unchanged observations cannot renew a
+lease indefinitely; after the lease expires, only the existing conservative
+safe-idle fallback may request return.

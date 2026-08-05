@@ -63,11 +63,76 @@ namespace DeferredReality.Wildlife
             new Dictionary<string, List<PreparedTransfer>>(StringComparer.Ordinal);
         private readonly Dictionary<string, List<PreparedAnchorMaterialization>> preparedAnchorMaterializations =
             new Dictionary<string, List<PreparedAnchorMaterialization>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, WildlifeTrailLead> excursionTasks =
+            new Dictionary<string, WildlifeTrailLead>(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> excursionTaskEvidence =
+            new Dictionary<string, string>(StringComparer.Ordinal);
 
         private static readonly HashSet<string> MaterializingRegions =
             new HashSet<string>(StringComparer.Ordinal);
 
         public int Order => 100;
+
+        /// <summary>Observes only provider-owned state changes; unchanged state does not renew a lease indefinitely.</summary>
+        public bool TryObserveExcursionTask(RealityExcursionTicket ticket, long now, out RealityExcursionTaskObservation observation)
+        {
+            observation = null;
+            if (ticket == null || string.IsNullOrEmpty(ticket.excursionId) || string.IsNullOrEmpty(ticket.taskId) ||
+                !excursionTasks.TryGetValue(ticket.excursionId, out WildlifeTrailLead lead) || lead == null) return false;
+            Pawn pawn = lead.tracker;
+            if (lead.state != WildlifeTrailState.BeyondMap)
+            {
+                observation = new RealityExcursionTaskObservation
+                {
+                    taskId = ticket.taskId,
+                    abandoned = true,
+                    diagnostic = "The Wildlife trail task is no longer in its adjacent-region state."
+                };
+                return true;
+            }
+            bool onDestination = pawn?.Spawned == true && pawn.Map != null && pawn.Map.uniqueID == ticket.destinationMapUniqueId;
+            string fingerprint = (pawn?.Map?.uniqueID.ToString() ?? "missing") + "|" +
+                (pawn?.Position.ToString() ?? "none") + "|" + (pawn?.CurJobDef?.defName ?? "none") + "|" + lead.state;
+            bool changed = !excursionTaskEvidence.TryGetValue(ticket.excursionId, out string previous) || previous != fingerprint;
+            if (changed) excursionTaskEvidence[ticket.excursionId] = fingerprint;
+            observation = new RealityExcursionTaskObservation
+            {
+                taskId = ticket.taskId,
+                active = onDestination,
+                evidenceTick = changed ? now : -1,
+                diagnostic = onDestination ? "Wildlife trail state and Pawn placement observed." :
+                    "Wildlife trail state is retained while the exact Pawn is not on the destination map."
+            };
+            return true;
+        }
+
+        /// <summary>Explicit integration hook for reliable provider task progress when the Herds bridge has it.</summary>
+        public bool HeartbeatExcursionTask(string excursionId, string diagnostic = null)
+        {
+            return attachedWorld != null && attachedWorld.HeartbeatExcursion(excursionId, attachedWorld.Now,
+                RealityAdjacentPolicy.DefaultLeaseTicks, diagnostic ?? "Wildlife provider task heartbeat.");
+        }
+
+        /// <summary>Explicit integration hook for completion of a provider-owned Wildlife task.</summary>
+        public bool CompleteExcursionTask(string excursionId, string diagnostic = null)
+        {
+            return attachedWorld != null && attachedWorld.CompleteExcursion(excursionId,
+                diagnostic ?? "Wildlife provider task completed.");
+        }
+
+        /// <summary>Explicit integration hook for an abandoned or failed provider-owned Wildlife task.</summary>
+        public bool AbandonExcursionTask(string excursionId, string diagnostic = null)
+        {
+            return attachedWorld != null && attachedWorld.CancelExcursion(excursionId,
+                diagnostic ?? "Wildlife provider task was abandoned.");
+        }
+
+        public void ForgetExcursionTask(RealityExcursionTicket ticket)
+        {
+            if (ticket == null) return;
+            excursionTasks.Remove(ticket.excursionId);
+            excursionTaskEvidence.Remove(ticket.excursionId);
+        }
 
         internal string AdjacentRegionSummary(Map map)
         {
@@ -457,10 +522,13 @@ namespace DeferredReality.Wildlife
             string pawnLoadId = lead.tracker.GetUniqueLoadID();
             string outboundTransferId = "wildlife:trail:outbound:" + RealityDeterminism.Combine(
                 source.ToString(), destination.ToString(), pawnLoadId, lead.createdTick.ToString(CultureInfo.InvariantCulture));
+            string taskId = "wildlife:trail:task:" + RealityDeterminism.Combine(
+                source.ToString(), destination.ToString(), pawnLoadId, lead.createdTick.ToString(CultureInfo.InvariantCulture));
             if (!attachedWorld.BeginExcursion(new RealityExcursionRequest
             {
                 providerId = ProviderId,
                 pawnLoadId = pawnLoadId,
+                taskId = taskId,
                 originRegionId = source,
                 originMapUniqueId = sourceMap.uniqueID,
                 destinationRegionId = destination,
@@ -496,6 +564,7 @@ namespace DeferredReality.Wildlife
                 pawns = new[] { lead.tracker },
                 transferId = outboundTransferId,
                 excursionId = excursionId,
+                providerTaskId = taskId,
                 isOutboundExcursion = true
             });
             if (!transfer.succeeded)
@@ -506,6 +575,8 @@ namespace DeferredReality.Wildlife
                 OpenWorldTravelFallback(sourceMap);
                 return false;
             }
+            excursionTasks[excursionId] = lead;
+            excursionTaskEvidence.Remove(excursionId);
             lead.state = WildlifeTrailState.BeyondMap;
             lead.lastOutcome = "The tracker crossed into the adjacent region to continue the trail.";
             Messages.Message(lead.tracker.LabelShortCap + " crossed into the adjacent Wildlife region to continue the trail.",

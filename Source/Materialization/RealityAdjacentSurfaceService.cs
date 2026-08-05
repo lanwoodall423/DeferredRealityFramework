@@ -184,6 +184,7 @@ namespace DeferredReality.Materialization
                 transferId = request.transferId,
                 providerId = request.providerId,
                 excursionId = request.excursionId,
+                providerTaskId = request.providerTaskId,
                 sourceRegionId = request.sourceRegionId.ToString(),
                 destinationRegionId = request.destinationRegionId.ToString(),
                 sourceMapUniqueId = request.sourceMap.uniqueID,
@@ -381,7 +382,8 @@ namespace DeferredReality.Materialization
             if (world == null || !world.TryGetAdjacentMapRecord(map.uniqueID, out RealityAdjacentMapRecord marker)) return;
             string key = marker.regionId;
             WarmMaps[key] = map;
-            long value = tick >= 0 ? tick : world.Now;
+            // Loading/monitoring is not user/provider access. Reconstruct recency from the persisted marker.
+            long value = tick >= 0 ? tick : marker.lastAccessTick;
             WarmMapAccessTicks[key] = Math.Max(WarmMapAccessTicks.TryGetValue(key, out long previous) ? previous : long.MinValue, value);
         }
 
@@ -420,19 +422,33 @@ namespace DeferredReality.Materialization
                     Map map = Find.Maps?.FirstOrDefault(candidate => candidate != null && candidate.uniqueID == marker.mapUniqueId);
                     if (map == null)
                     {
-                        EvictionDiagnostics[marker.regionId] = "Marked adjacent map is not currently materialized; role retained for recovery.";
+                        string diagnostic = "Marked adjacent map is not currently materialized; role retained for recovery.";
+                        RememberEvictionDiagnostic(marker.regionId, diagnostic);
+                        world.RecordAdjacentDiagnostic("map-unloaded", marker.providerId, marker.regionId, diagnostic);
                         continue;
                     }
-                    world.TouchAdjacentMap(map.uniqueID, now);
-                    TrackWarm(map, now);
-                    WarmMapAccessTicks[marker.regionId] = Math.Max(
-                        WarmMapAccessTicks.TryGetValue(marker.regionId, out long previous) ? previous : long.MinValue, now);
+                    TrackWarm(map, marker.lastAccessTick);
+                    if (EvictionDiagnostics.TryGetValue(marker.regionId, out string unloadedDiagnostic) &&
+                        unloadedDiagnostic.StartsWith("Marked adjacent map is not currently materialized", StringComparison.Ordinal))
+                        world.RecordAdjacentDiagnostic("map-unloaded", marker.providerId, marker.regionId,
+                            unloadedDiagnostic, now, true);
                     RealityAdjacentConstructionGuards.RemovePlayerConstructionArtifacts(map, world);
                 }
                 catch (Exception exception) { RecordMonitorFailure(world, marker.regionId, exception); }
             }
             foreach (RealityExcursionTicket ticket in world.ExcursionSnapshots())
             {
+                if (RealityRetentionPolicy.IsTerminalExcursion(ticket))
+                {
+                    foreach (IRealityExcursionTaskCleanupProvider cleanup in RealityProviderRegistry.OfType<IRealityExcursionTaskCleanupProvider>())
+                    {
+                        IRealityProvider provider = cleanup as IRealityProvider;
+                        if (provider?.Registration?.providerId != ticket.providerId) continue;
+                        try { cleanup.ForgetExcursionTask(ticket); }
+                        catch (Exception exception) { RecordMonitorFailure(world, "task-cleanup", exception); }
+                    }
+                    continue;
+                }
                 try { MonitorExcursion(world, ticket, now); }
                 catch (Exception exception) { RecordMonitorFailure(world, ticket?.excursionId, exception); }
             }
@@ -443,7 +459,8 @@ namespace DeferredReality.Materialization
         private static void RecordMonitorFailure(DeferredRealityWorldComponent world, string key, Exception exception)
         {
             string diagnostic = "Adjacent safety monitoring failed: " + exception.Message;
-            EvictionDiagnostics[key ?? "monitor"] = diagnostic;
+            RememberEvictionDiagnostic(key ?? "monitor", diagnostic);
+            world?.RecordAdjacentDiagnostic("monitor-failure", "core", key, diagnostic);
             try { world?.Quarantine("adjacent-monitor", key, "core", diagnostic, exception.GetType().FullName); }
             catch { Log.Error("[DeferredReality] " + diagnostic); }
         }
@@ -473,7 +490,12 @@ namespace DeferredReality.Materialization
             foreach (RealityExcursionTicket ticket in world.ExcursionSnapshots())
                 lines.Add("excursion|" + ticket.excursionId + "|" + ticket.providerId + "|" + ticket.pawnLoadId +
                     "|" + ticket.status + "|" + ticket.originMapUniqueId + "->" + ticket.destinationMapUniqueId +
+                    "|task=" + (ticket.taskId ?? string.Empty) + "|heartbeat=" + ticket.lastTaskHeartbeat +
                     "|retry=" + ticket.retryTick + "|" + (ticket.diagnostic ?? string.Empty));
+            foreach (RealityMapCreationIntentRecord intent in world.MapCreationIntentSnapshots())
+                lines.Add("creation-intent|" + intent.transactionId + "|" + intent.providerId + "|" + intent.regionId +
+                    "|map=" + intent.createdMapUniqueId + "|preexisting=" + intent.preexistingMapUniqueId +
+                    "|lifecycle=" + intent.lifecycle + "|" + (intent.diagnostic ?? string.Empty));
             lines.Add("construction|marked-maps=" + world.AdjacentMapSnapshots().Count + "|rejection=" +
                 RealityAdjacentConstructionGuards.RejectionMessage);
             lines.AddRange(EvictionDiagnostics.OrderBy(item => item.Key, StringComparer.Ordinal)
@@ -525,9 +547,40 @@ namespace DeferredReality.Materialization
             }
             bool unsafeState = IsUnsafeOrMeaningful(pawn);
             bool safelyIdle = !unsafeState && IsSafeIdle(pawn);
+            bool providerTaskActive = false;
             bool taskCompleted = ticket.status == RealityExcursionStatus.ReturnRequested ||
                 ticket.status == RealityExcursionStatus.Cancelled;
-            if (!RealityAdjacentPolicy.IsReturnDue(ticket, now, taskCompleted, safelyIdle, unsafeState, false))
+            if (RealityProviderRegistry.TryGet(ticket.providerId, out IRealityProvider provider) &&
+                provider is IRealityExcursionTaskProvider taskProvider && !string.IsNullOrEmpty(ticket.taskId))
+            {
+                if (taskProvider.TryObserveExcursionTask(ticket, now, out RealityExcursionTaskObservation observation) && observation != null)
+                {
+                    if (!string.IsNullOrEmpty(observation.taskId) && observation.taskId != ticket.taskId)
+                    {
+                        world.SetExcursionDiagnostic(ticket.excursionId,
+                            "The provider returned task evidence for a different task; evidence was ignored.",
+                            now + RealityAdjacentPolicy.RetryBackoffTicks);
+                    }
+                    else if (observation.completed)
+                    {
+                        world.CompleteExcursion(ticket.excursionId, observation.diagnostic ?? "The provider task completed.");
+                        taskCompleted = true;
+                    }
+                    else if (observation.abandoned)
+                    {
+                        world.CancelExcursion(ticket.excursionId, observation.diagnostic ?? "The provider task was abandoned.");
+                        taskCompleted = true;
+                    }
+                    else if (observation.active && RealityAdjacentPolicy.IsFreshTaskEvidence(observation.evidenceTick, now))
+                    {
+                        providerTaskActive = true;
+                        if (observation.evidenceTick > ticket.lastTaskHeartbeat)
+                            world.HeartbeatExcursion(ticket.excursionId, now, RealityAdjacentPolicy.DefaultLeaseTicks,
+                                observation.diagnostic ?? "Provider task activity observed.");
+                    }
+                }
+            }
+            if (!RealityAdjacentPolicy.IsReturnDue(ticket, now, taskCompleted, safelyIdle, unsafeState, providerTaskActive))
             {
                 if (unsafeState) world.SetExcursionDiagnostic(ticket.excursionId,
                     "Return is waiting for the Pawn to leave combat, medical, drafted, carried, or provider work state.",
@@ -561,8 +614,9 @@ namespace DeferredReality.Materialization
             world.MarkExcursionReturning(ticket.excursionId, now + RealityAdjacentPolicy.RetryBackoffTicks, "Return transfer in progress.");
             RealityAdjacentTransferResult result = TryTransfer(new RealityAdjacentTransferRequest
             {
-                providerId = ticket.providerId,
-                excursionId = ticket.excursionId,
+                    providerId = ticket.providerId,
+                    excursionId = ticket.excursionId,
+                    providerTaskId = ticket.taskId,
                 sourceMap = pawnMap,
                 destinationMap = originMap,
                 sourceRegionId = destinationRegion,
@@ -614,6 +668,7 @@ namespace DeferredReality.Materialization
                 {
                     providerId = journal.providerId ?? destinationRegion.ProviderNamespace,
                     excursionId = journal.excursionId,
+                    providerTaskId = journal.providerTaskId,
                     sourceMap = sourceMap,
                     destinationMap = destinationMap,
                     sourceRegionId = sourceRegion,
@@ -694,6 +749,7 @@ namespace DeferredReality.Materialization
                     {
                         providerId = request.providerId,
                         excursionId = request.excursionId,
+                        providerTaskId = request.taskId,
                         isOutboundExcursion = true,
                         sourceMap = sourceMap,
                         destinationMap = destinationMap,
@@ -788,6 +844,7 @@ namespace DeferredReality.Materialization
             return string.Equals(journal.transferId, request.transferId, StringComparison.Ordinal) &&
                 string.Equals(journal.providerId, request.providerId, StringComparison.Ordinal) &&
                 string.Equals(journal.excursionId ?? string.Empty, request.excursionId ?? string.Empty, StringComparison.Ordinal) &&
+                string.Equals(journal.providerTaskId ?? string.Empty, request.providerTaskId ?? string.Empty, StringComparison.Ordinal) &&
                 string.Equals(journal.sourceRegionId, request.sourceRegionId.ToString(), StringComparison.Ordinal) &&
                 string.Equals(journal.destinationRegionId, request.destinationRegionId.ToString(), StringComparison.Ordinal) &&
                 journal.sourceMapUniqueId == request.sourceMap.uniqueID &&
@@ -838,7 +895,7 @@ namespace DeferredReality.Materialization
                 (journal.sourceMapUniqueId == map.uniqueID || journal.destinationMapUniqueId == map.uniqueID ||
                  journal.sourceRegionId == marker.regionId || journal.destinationRegionId == marker.regionId)))
                 return RecordEvictionVeto(key, "An interrupted or unresolved transfer journal references the map.");
-            if (!RealityMapFactoryRegistry.TryGet(marker.providerId, out IRealityMapFactory factory))
+            if (!RealityMapFactoryRegistry.TryGetScoped(marker.providerId, out IRealityMapFactory factory))
                 return RecordEvictionVeto(key, "The registered provider map factory is unavailable.");
             if (!RealityRegionId.TryParse(marker.regionId, out RealityRegionId adjacentRegion))
             {
@@ -880,6 +937,8 @@ namespace DeferredReality.Materialization
             }
             world.UnregisterMap(map);
             world.RetireAdjacentMap(map.uniqueID, "Warm-cache eviction completed through the provider factory.");
+            if (EvictionDiagnostics.TryGetValue(key, out string priorDiagnostic))
+                world.RecordAdjacentDiagnostic("eviction-veto", "core", key, priorDiagnostic, now, true);
             WarmMaps.Remove(key);
             WarmMapAccessTicks.Remove(key);
             EvictionDiagnostics.Remove(key);
@@ -897,8 +956,20 @@ namespace DeferredReality.Materialization
 
         private static bool RecordEvictionVeto(string key, string diagnostic)
         {
-            EvictionDiagnostics[key] = diagnostic ?? "Eviction was vetoed.";
+            string value = diagnostic ?? "Eviction was vetoed.";
+            RememberEvictionDiagnostic(key, value);
+            DeferredRealityWorldComponent.Current?.RecordAdjacentDiagnostic(
+                "eviction-veto", "core", key, value);
             return false;
+        }
+
+        private static void RememberEvictionDiagnostic(string key, string diagnostic)
+        {
+            if (string.IsNullOrEmpty(key)) key = "adjacent";
+            EvictionDiagnostics[key] = diagnostic ?? string.Empty;
+            foreach (string stale in EvictionDiagnostics.Keys.OrderBy(value => value, StringComparer.Ordinal)
+                .Skip(RealityRetentionPolicy.MaximumResolvedAdjacentDiagnostics).ToList())
+                EvictionDiagnostics.Remove(stale);
         }
 
         /// <summary>Removes a deinitialized map from the runtime warm cache.</summary>
@@ -955,9 +1026,9 @@ namespace DeferredReality.Materialization
             listing.Begin(inRect);
             DeferredRealityModSettings settings = DeferredRealityModSettings.Current;
             listing.CheckboxLabeled("Enable experimental temporary excursion sites", ref settings.enableAdjacentRegions,
-                "Disabled by default; enabled maps are non-buildable work sites. Transfers use ordinary world travel only after exact rollback; unresolved failures remain recoverable.");
+                "Disabled by default; enabled maps are temporary non-buildable work sites, not colony maps. Transfers use ordinary world travel only after exact rollback; unresolved failures remain recoverable.");
             settings.warmMapCacheLimit = Mathf.RoundToInt(listing.SliderLabeled("Warm map cache limit", settings.warmMapCacheLimit, 0, 8, 1f));
-            listing.Label("Only marked maps are cached; over-limit entries are removed only after provider compression and real factory eviction succeed.");
+            listing.Label("Only marked maps are cached; background inspection does not refresh recency. Over-limit entries are removed only after provider compression and real factory eviction succeed.");
             listing.End();
         }
     }

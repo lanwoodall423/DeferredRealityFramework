@@ -12,11 +12,17 @@ namespace DeferredReality.API
     /// <summary>Authoritative world-level store for latent reality.</summary>
     public sealed class DeferredRealityWorldComponent : WorldComponent
     {
-        public const int CurrentSaveSchema = 3;
+        public const int CurrentSaveSchema = 5;
         private const int MaximumObservationHistory = 8192;
         private const int MaximumQuarantineRecords = 4096;
         private const int MaximumConflictRecords = 2048;
         private const int MaximumCancelledProcesses = 1024;
+        private const int MaximumAdjacentDiagnostics = 2048;
+        private const int MaximumTerminalExcursions = 1024;
+        private const int MaximumRetiredAdjacentMaps = 256;
+        private const long AdjacentTerminalRetentionTicks = 600000L;
+        private const long StorageMaintenanceIntervalTicks = 6000L;
+        private const int StorageMaintenanceMutationThreshold = 64;
 
         private int saveSchema = CurrentSaveSchema;
         private List<RealityRegionDescriptor> regions = new List<RealityRegionDescriptor>();
@@ -35,6 +41,9 @@ namespace DeferredReality.API
         private List<RealityTransferJournalRecord> transferJournals = new List<RealityTransferJournalRecord>();
         private List<RealityAdjacentMapRecord> adjacentMaps = new List<RealityAdjacentMapRecord>();
         private List<RealityExcursionTicket> excursions = new List<RealityExcursionTicket>();
+        private List<RealityMapCreationIntentRecord> mapCreationIntents = new List<RealityMapCreationIntentRecord>();
+        private List<RealityAdjacentDiagnosticRecord> adjacentDiagnostics = new List<RealityAdjacentDiagnosticRecord>();
+        private List<RealityOperationRetentionWatermark> operationWatermarks = new List<RealityOperationRetentionWatermark>();
 
         private readonly Dictionary<string, RealityRegionDescriptor> regionById = new Dictionary<string, RealityRegionDescriptor>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityPopulationRecord> populationById = new Dictionary<string, RealityPopulationRecord>(StringComparer.Ordinal);
@@ -46,6 +55,9 @@ namespace DeferredReality.API
         private readonly Dictionary<int, string> regionByLegacyMapId = new Dictionary<int, string>();
         private readonly Dictionary<int, RealityAdjacentMapRecord> adjacentMapById = new Dictionary<int, RealityAdjacentMapRecord>();
         private readonly Dictionary<string, RealityExcursionTicket> excursionById = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
+        private readonly Dictionary<string, RealityExcursionTicket> activeExcursionById = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
+        private readonly Dictionary<string, RealityMapCreationIntentRecord> mapCreationIntentById =
+            new Dictionary<string, RealityMapCreationIntentRecord>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityExcursionTicket> pendingExcursions = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
         private readonly Dictionary<string, Pawn> pendingExcursionPawns = new Dictionary<string, Pawn>(StringComparer.Ordinal);
         private readonly Dictionary<string, Pawn> excursionPawnInstances = new Dictionary<string, Pawn>(StringComparer.Ordinal);
@@ -54,6 +66,11 @@ namespace DeferredReality.API
         private bool processScheduleCacheReady;
         private long earliestRunnableProcessDueTick = long.MaxValue;
         private long nextAdjacentMonitorTick;
+        private bool storageMaintenanceDirty;
+        private long nextStorageMaintenanceTick;
+        private int storageMaintenanceMutationCount;
+        private RealityCompactionReport lastCompactionReport = new RealityCompactionReport();
+        private int unresolvedTransferJournalCount;
         private int revision;
 
         /// <summary>Returns the active world component, if a world exists.</summary>
@@ -72,13 +89,23 @@ namespace DeferredReality.API
         public long Now => Find.TickManager?.TicksGame ?? 0;
 
         /// <summary>Whether persisted adjacent roles or nonterminal excursions still require safety monitoring.</summary>
-        public bool HasAdjacentSafetyWork => adjacentMapById.Count > 0 || excursions.Count > 0;
+        public bool HasAdjacentSafetyWork => adjacentMapById.Count > 0 || activeExcursionById.Count > 0 ||
+            mapCreationIntentById.Count > 0 || unresolvedTransferJournalCount > 0;
+
+        /// <summary>Whether bounded storage maintenance is waiting for its next scheduled pass.</summary>
+        public bool StorageMaintenanceDirty => storageMaintenanceDirty;
+
+        /// <summary>Next tick at which dirty storage maintenance may run.</summary>
+        public long NextStorageMaintenanceTick => nextStorageMaintenanceTick;
+
+        /// <summary>Last deterministic compaction report.</summary>
+        public RealityCompactionReport LastCompactionReport => lastCompactionReport;
 
         /// <inheritdoc />
         public override void ExposeData()
         {
             base.ExposeData();
-            if (Scribe.mode == LoadSaveMode.Saving) CompactStorageInternal(Now);
+            if (Scribe.mode == LoadSaveMode.Saving) RunStorageMaintenance(Now, true);
             Scribe_Values.Look(ref saveSchema, "deferredRealitySaveSchema", CurrentSaveSchema);
             Scribe_Values.Look(ref revision, "deferredRealityRevision", 0);
             Scribe_Collections.Look(ref regions, "deferredRealityRegions", LookMode.Deep);
@@ -97,6 +124,12 @@ namespace DeferredReality.API
             Scribe_Collections.Look(ref transferJournals, "deferredRealityTransferJournals", LookMode.Deep);
             Scribe_Collections.Look(ref adjacentMaps, "deferredRealityAdjacentMaps", LookMode.Deep);
             Scribe_Collections.Look(ref excursions, "deferredRealityExcursions", LookMode.Deep);
+            Scribe_Collections.Look(ref mapCreationIntents, "deferredRealityMapCreationIntents", LookMode.Deep);
+            Scribe_Collections.Look(ref adjacentDiagnostics, "deferredRealityAdjacentDiagnostics", LookMode.Deep);
+            Scribe_Collections.Look(ref operationWatermarks, "deferredRealityOperationWatermarks", LookMode.Deep);
+            Scribe_Values.Look(ref storageMaintenanceDirty, "deferredRealityStorageMaintenanceDirty", false);
+            Scribe_Values.Look(ref nextStorageMaintenanceTick, "deferredRealityNextStorageMaintenanceTick", 0L);
+            Scribe_Values.Look(ref storageMaintenanceMutationCount, "deferredRealityStorageMaintenanceMutationCount", 0);
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
                 regions = regions ?? new List<RealityRegionDescriptor>();
@@ -115,6 +148,11 @@ namespace DeferredReality.API
                 transferJournals = transferJournals ?? new List<RealityTransferJournalRecord>();
                 adjacentMaps = adjacentMaps ?? new List<RealityAdjacentMapRecord>();
                 excursions = excursions ?? new List<RealityExcursionTicket>();
+                mapCreationIntents = mapCreationIntents ?? new List<RealityMapCreationIntentRecord>();
+                adjacentDiagnostics = adjacentDiagnostics ?? new List<RealityAdjacentDiagnosticRecord>();
+                operationWatermarks = operationWatermarks ?? new List<RealityOperationRetentionWatermark>();
+                storageMaintenanceDirty = true;
+                nextStorageMaintenanceTick = Now;
                 if (saveSchema > CurrentSaveSchema)
                     QuarantineInternal("save", "root", "core", "Save schema is newer than this framework version.", saveSchema.ToString(), Now);
                 saveSchema = CurrentSaveSchema;
@@ -135,6 +173,7 @@ namespace DeferredReality.API
             }
             long now = Now;
             if (HasRunnableProcessDue(now)) RealityProcessScheduler.RunDue(this, now, RealityProcessRunOptions.Default);
+            RunStorageMaintenance(now, false);
             if ((DeferredRealityModSettings.Current.enableAdjacentRegions || HasAdjacentSafetyWork) && now >= nextAdjacentMonitorTick)
             {
                 nextAdjacentMonitorTick = now + RealityAdjacentPolicy.MonitorIntervalTicks;
@@ -471,6 +510,10 @@ namespace DeferredReality.API
             RealityThreadGuard.RequireMainThread();
             if (map == null) return default(RealityRegionId);
             EnsureIndexes();
+            if (TryRegisterMapFromCreationIntent(map, default(RealityRegionId), out RealityRegionId intendedRegion,
+                out bool intentHandled))
+                return intendedRegion;
+            if (intentHandled) return default(RealityRegionId);
             if (regionByLegacyMapId.TryGetValue(map.uniqueID, out string existingId) && RealityRegionId.TryParse(existingId, out RealityRegionId existing))
             {
                 // Persisted aliases remain authoritative; a second live map cannot steal the identity.
@@ -508,6 +551,10 @@ namespace DeferredReality.API
             RealityThreadGuard.RequireMainThread();
             if (map == null || !regionId.IsValid) return default(RealityRegionId);
             EnsureIndexes();
+            if (TryRegisterMapFromCreationIntent(map, regionId, out RealityRegionId intendedRegion,
+                out bool intentHandled))
+                return intendedRegion;
+            if (intentHandled) return default(RealityRegionId);
             if (!map.Tile.Valid || map.Tile != (PlanetTile)regionId.WorldTile)
             {
                 QuarantineInternal("map", map.uniqueID.ToString(), "core",
@@ -588,16 +635,54 @@ namespace DeferredReality.API
         }
 
         /// <summary>Persists an exactly-once operation marker.</summary>
-        public bool RecordAppliedOperation(string operationId, string providerId, string kind, long tick)
+        public bool RecordAppliedOperation(string operationId, string providerId, string kind, long tick, string domainId = null)
         {
             RealityThreadGuard.RequireMainThread();
             if (string.IsNullOrEmpty(operationId)) return false;
             EnsureIndexes();
             if (!appliedOperationIds.Add(operationId)) return false;
-            appliedOperations.Add(new RealityAppliedOperation { operationId = operationId, providerId = providerId, kind = kind, tick = tick });
+            appliedOperations.Add(new RealityAppliedOperation
+            {
+                operationId = operationId,
+                providerId = providerId,
+                domainId = string.IsNullOrWhiteSpace(domainId) ? null : domainId.Trim(),
+                kind = kind,
+                tick = tick
+            });
             Touch("operation.applied", providerId, null, operationId);
-            CompactStorageInternal(tick);
+            MarkStorageMaintenanceDirty(tick);
             return true;
+        }
+
+        /// <summary>Publishes provider proof that a replay domain has advanced past a durable tick.</summary>
+        public bool UpsertOperationRetentionWatermark(RealityOperationRetentionWatermark value)
+        {
+            RealityThreadGuard.RequireMainThread();
+            if (value == null || string.IsNullOrWhiteSpace(value.providerId) || string.IsNullOrWhiteSpace(value.kind) ||
+                string.IsNullOrWhiteSpace(value.domainId) || value.safeThroughTick < 0) return false;
+            value.providerId = value.providerId.Trim();
+            value.kind = value.kind.Trim();
+            value.domainId = value.domainId.Trim();
+            value.updatedTick = Math.Max(value.updatedTick, Now);
+            int index = operationWatermarks.FindIndex(item => item != null && item.providerId == value.providerId &&
+                item.kind == value.kind && item.domainId == value.domainId);
+            if (index >= 0)
+            {
+                if (operationWatermarks[index].safeThroughTick > value.safeThroughTick) return false;
+                operationWatermarks[index] = value.Clone();
+            }
+            else operationWatermarks.Add(value.Clone());
+            Touch("operation.watermark", value.providerId, value.kind, value.domainId);
+            MarkStorageMaintenanceDirty(value.updatedTick);
+            return true;
+        }
+
+        /// <summary>Returns detached, deterministic provider replay-watermark records.</summary>
+        public IReadOnlyList<RealityOperationRetentionWatermark> OperationWatermarkSnapshots(string providerId = null)
+        {
+            return operationWatermarks.Where(item => item != null && (string.IsNullOrEmpty(providerId) || item.providerId == providerId))
+                .OrderBy(item => item.providerId, StringComparer.Ordinal).ThenBy(item => item.kind, StringComparer.Ordinal)
+                .ThenBy(item => item.domainId, StringComparer.Ordinal).Select(item => item.Clone()).ToList();
         }
 
         /// <summary>Returns whether a provider migration version is committed.</summary>
@@ -674,7 +759,197 @@ namespace DeferredReality.API
             if (index >= 0) transferJournals[index] = value.Clone();
             else transferJournals.Add(value.Clone());
             Touch("transfer.journal", "core", value.sourceRegionId, value.transferId);
-            CompactStorageInternal(Now);
+            MarkStorageMaintenanceDirty(Now);
+            return true;
+        }
+
+        /// <summary>Authorizes one provider-owned adjacent map creation before the host starts map generation.</summary>
+        internal bool BeginMapCreationIntent(string transactionId, RealityRegionId regionId,
+            RealityAdjacentMapMetadata metadata, out string diagnostic)
+        {
+            RealityThreadGuard.RequireMainThread();
+            diagnostic = null;
+            if (string.IsNullOrWhiteSpace(transactionId) || !regionId.IsValid || metadata == null ||
+                string.IsNullOrWhiteSpace(metadata.providerId) || !metadata.originRegionId.IsValid ||
+                metadata.originMapUniqueId < 0 || !RealityProviderRegistry.TryGet(metadata.providerId.Trim(), out _))
+            {
+                diagnostic = "Adjacent map creation intent has incomplete ownership or origin identity.";
+                return false;
+            }
+            EnsureIndexes();
+            string owner = metadata.providerId.Trim();
+            string regionKey = regionId.ToString();
+            string originKey = metadata.originRegionId.ToString();
+            if (mapCreationIntentById.TryGetValue(transactionId, out RealityMapCreationIntentRecord existing))
+            {
+                if (existing.providerId == owner && existing.regionId == regionKey &&
+                    existing.originRegionId == originKey && existing.originMapUniqueId == metadata.originMapUniqueId)
+                    return true;
+                diagnostic = "A materialization transaction ID is already bound to a different adjacent site.";
+                QuarantineInternal("map-creation-intent", transactionId, owner, diagnostic, regionKey, Now);
+                return false;
+            }
+            if (mapCreationIntents.Any(item => item != null && item.providerId == owner && item.regionId == regionKey))
+            {
+                diagnostic = "Another adjacent map creation intent already owns the requested region and provider.";
+                QuarantineInternal("map-creation-intent", transactionId, owner, diagnostic, regionKey, Now);
+                return false;
+            }
+            metadata.transactionId = transactionId;
+            if (metadata.createdTick < 0) metadata.createdTick = Now;
+            if (!Enum.IsDefined(typeof(RealityAdjacentMapLifecycle), metadata.lifecycle))
+                metadata.lifecycle = RealityAdjacentMapLifecycle.Materializing;
+            var intent = new RealityMapCreationIntentRecord
+            {
+                transactionId = transactionId,
+                providerId = owner,
+                regionId = regionKey,
+                originRegionId = originKey,
+                originMapUniqueId = metadata.originMapUniqueId,
+                preexistingMapUniqueId = (Find.Maps ?? Enumerable.Empty<Map>())
+                    .Where(item => item != null && item.Tile.Valid && (int)item.Tile == regionId.WorldTile)
+                    .Select(item => item.uniqueID).DefaultIfEmpty(-1).First(),
+                createdTick = metadata.createdTick,
+                lifecycle = RealityAdjacentMapLifecycle.Materializing
+            };
+            mapCreationIntents.Add(intent);
+            mapCreationIntentById[transactionId] = intent;
+            Touch("adjacent-map.intent-created", owner, regionKey, transactionId);
+            return true;
+        }
+
+        /// <summary>Binds the intent to the map identity returned by the host factory.</summary>
+        internal bool BindMapCreationIntent(string transactionId, Map map)
+        {
+            RealityThreadGuard.RequireMainThread();
+            if (map == null || string.IsNullOrEmpty(transactionId)) return false;
+            if (!mapCreationIntentById.TryGetValue(transactionId, out RealityMapCreationIntentRecord intent))
+                return IsAdjacentMap(map);
+            if (!map.Tile.Valid || !RealityRegionId.TryParse(intent.regionId, out RealityRegionId region) ||
+                map.Tile != (PlanetTile)region.WorldTile) return false;
+            if (intent.createdMapUniqueId >= 0 && intent.createdMapUniqueId != map.uniqueID) return false;
+            intent.createdMapUniqueId = map.uniqueID;
+            Touch("adjacent-map.intent-bound", intent.providerId, intent.regionId, map.uniqueID.ToString());
+            return true;
+        }
+
+        /// <summary>Clears a creation intent after commit, rollback, or explicit recovery.</summary>
+        internal void ClearMapCreationIntent(string transactionId, string diagnostic = null, bool quarantine = false)
+        {
+            RealityThreadGuard.RequireMainThread();
+            if (string.IsNullOrEmpty(transactionId) || !mapCreationIntentById.TryGetValue(transactionId,
+                out RealityMapCreationIntentRecord intent)) return;
+            if (quarantine && !string.IsNullOrEmpty(diagnostic))
+                QuarantineInternal("map-creation-intent", transactionId, intent.providerId, diagnostic, intent.regionId, Now);
+            mapCreationIntentById.Remove(transactionId);
+            mapCreationIntents.RemoveAll(item => item != null && item.transactionId == transactionId);
+            Touch("adjacent-map.intent-cleared", intent.providerId, intent.regionId, transactionId);
+        }
+
+        /// <summary>Returns detached creation intents for diagnostics and deterministic save recovery.</summary>
+        public IReadOnlyList<RealityMapCreationIntentRecord> MapCreationIntentSnapshots()
+        {
+            EnsureIndexes();
+            return mapCreationIntents.Where(item => item != null)
+                .OrderBy(item => item.transactionId, StringComparer.Ordinal)
+                .Select(item => item.Clone()).ToList();
+        }
+
+        private bool TryRegisterMapFromCreationIntent(Map map, RealityRegionId requestedRegion,
+            out RealityRegionId regionId, out bool intentHandled)
+        {
+            regionId = default(RealityRegionId);
+            intentHandled = false;
+            if (map == null || !map.Tile.Valid) return false;
+            List<RealityMapCreationIntentRecord> candidates = mapCreationIntents.Where(item =>
+                item != null && RealityRegionId.TryParse(item.regionId, out RealityRegionId expected) &&
+                expected.WorldTile == (int)map.Tile).ToList();
+            if (candidates.Count == 0) return false;
+            intentHandled = true;
+            if (candidates.Count != 1)
+            {
+                string diagnostic = "Multiple adjacent map creation intents matched one map tile.";
+                foreach (RealityMapCreationIntentRecord candidate in candidates.ToList())
+                    ClearMapCreationIntent(candidate.transactionId, diagnostic, true);
+                return false;
+            }
+            RealityMapCreationIntentRecord intent = candidates[0];
+            if (!RealityRegionId.TryParse(intent.regionId, out RealityRegionId expectedRegion) ||
+                (requestedRegion.IsValid && requestedRegion != expectedRegion) ||
+                (intent.createdMapUniqueId >= 0 && intent.createdMapUniqueId != map.uniqueID) ||
+                (intent.preexistingMapUniqueId >= 0 && intent.preexistingMapUniqueId == map.uniqueID &&
+                    !adjacentMapById.ContainsKey(map.uniqueID)))
+            {
+                ClearMapCreationIntent(intent.transactionId,
+                    "A map did not match the region or identity recorded by its creation intent.", true);
+                return false;
+            }
+            if (!TryResolveMapIdentity(map, out RealityRegionId resolvedRegion, out RealityMapIdentityClaim claim) ||
+                resolvedRegion != expectedRegion ||
+                !RealityMapCreationPolicy.IsOwnerClaimCompatible(expectedRegion, intent.providerId, claim) ||
+                !RealityMapCreationPolicy.CanClassifyMap(intent.preexistingMapUniqueId == map.uniqueID,
+                    adjacentMapById.ContainsKey(map.uniqueID), intent.transactionId, intent.createdMapUniqueId, map.uniqueID))
+            {
+                ClearMapCreationIntent(intent.transactionId,
+                    "A generated map did not provide the expected provider identity claim.", true);
+                return false;
+            }
+            if (!RegisterAdjacentMapFromCreationIntent(map, expectedRegion, intent))
+            {
+                ClearMapCreationIntent(intent.transactionId,
+                    "A generated map could not be atomically classified as its intended adjacent site.", true);
+                return false;
+            }
+            regionId = expectedRegion;
+            return true;
+        }
+
+        private bool RegisterAdjacentMapFromCreationIntent(Map map, RealityRegionId regionId,
+            RealityMapCreationIntentRecord intent)
+        {
+            if (map == null || intent == null || !regionId.IsValid || intent.createdMapUniqueId >= 0 &&
+                intent.createdMapUniqueId != map.uniqueID) return false;
+            if (!RealityProviderRegistry.TryGet(intent.providerId, out _)) return false;
+            RealityAdjacentMapRecord existing = adjacentMapById.TryGetValue(map.uniqueID, out RealityAdjacentMapRecord value)
+                ? value : null;
+            if (existing != null && (existing.regionId != regionId.ToString() || existing.providerId != intent.providerId ||
+                !string.IsNullOrEmpty(existing.originRegionId) && existing.originRegionId != intent.originRegionId ||
+                existing.originMapUniqueId >= 0 && existing.originMapUniqueId != intent.originMapUniqueId)) return false;
+            if (regionByLegacyMapId.TryGetValue(map.uniqueID, out string mappedRegion) && mappedRegion != regionId.ToString()) return false;
+            RealityMapAlias alias = mapAliases.FirstOrDefault(item => item != null && item.legacyMapId == map.uniqueID);
+            if (alias != null && alias.regionId != regionId.ToString()) return false;
+            RealityRegionDescriptor descriptor = RegionRecord(regionId.ToString());
+            if (descriptor != null && descriptor.activeMapUniqueId >= 0 && descriptor.activeMapUniqueId != map.uniqueID) return false;
+            EnsureRegion(regionId, "World tile " + regionId.WorldTile, Now);
+            bool addedAlias = false;
+            if (alias == null)
+            {
+                alias = new RealityMapAlias { legacyMapId = map.uniqueID, regionId = regionId.ToString(), migratedTick = Now };
+                mapAliases.Add(alias);
+                addedAlias = true;
+            }
+            regionByLegacyMapId[map.uniqueID] = regionId.ToString();
+            if (!MarkMapActive(regionId, map))
+            {
+                if (addedAlias) mapAliases.Remove(alias);
+                regionByLegacyMapId.Remove(map.uniqueID);
+                return false;
+            }
+            RealityAdjacentMapRecord record = existing ?? new RealityAdjacentMapRecord { mapUniqueId = map.uniqueID };
+            if (string.IsNullOrEmpty(record.transactionId)) record.transactionId = intent.transactionId;
+            record.providerId = intent.providerId;
+            record.regionId = regionId.ToString();
+            record.originRegionId = intent.originRegionId;
+            record.originMapUniqueId = intent.originMapUniqueId;
+            record.createdTick = intent.createdTick;
+            record.lastAccessTick = Now;
+            record.lifecycle = RealityAdjacentMapLifecycle.Active;
+            record.diagnostic = null;
+            if (existing == null) adjacentMaps.Add(record);
+            adjacentMapById[record.mapUniqueId] = record;
+            mapCreationIntentById.Remove(intent.transactionId);
+            mapCreationIntents.RemoveAll(item => item != null && item.transactionId == intent.transactionId);
+            Touch("adjacent-map.marked", record.providerId, record.regionId, record.mapUniqueId.ToString());
             return true;
         }
 
@@ -683,35 +958,44 @@ namespace DeferredReality.API
         {
             RealityThreadGuard.RequireMainThread();
             if (map == null || !regionId.IsValid || metadata == null || string.IsNullOrEmpty(metadata.providerId) ||
-                !string.Equals(metadata.providerId.Trim(), regionId.ProviderNamespace, StringComparison.Ordinal) ||
-                !metadata.originRegionId.IsValid || metadata.originMapUniqueId < 0) return false;
+                !metadata.originRegionId.IsValid || metadata.originMapUniqueId < 0 ||
+                !RealityProviderRegistry.TryGet(metadata.providerId.Trim(), out _)) return false;
             EnsureIndexes();
+            string owner = metadata.providerId.Trim();
             if (metadata.createdTick < 0) metadata.createdTick = Now;
             if (adjacentMapById.TryGetValue(map.uniqueID, out RealityAdjacentMapRecord existing) &&
                 (!string.Equals(existing.regionId, regionId.ToString(), StringComparison.Ordinal) ||
-                 !string.Equals(existing.providerId, metadata.providerId, StringComparison.Ordinal)))
+                 !string.Equals(existing.providerId, owner, StringComparison.Ordinal) ||
+                 !string.IsNullOrEmpty(existing.originRegionId) &&
+                 !string.Equals(existing.originRegionId, metadata.originRegionId.ToString(), StringComparison.Ordinal) ||
+                 existing.originMapUniqueId >= 0 && existing.originMapUniqueId != metadata.originMapUniqueId))
             {
-                QuarantineInternal("adjacent-map", map.uniqueID.ToString(), metadata.providerId,
+                QuarantineInternal("adjacent-map", map.uniqueID.ToString(), owner,
                     "A live map attempted to change its persisted adjacent role.", regionId.ToString(), Now);
                 return false;
             }
-            RealityRegionDescriptor current = regionById.TryGetValue(regionId.ToString(), out RealityRegionDescriptor currentRegion)
-                ? currentRegion : null;
-            if (existing == null && current != null && current.activeMapUniqueId == map.uniqueID &&
-                current.lifecycle == RealityLifecycleState.Active)
+            if (existing == null && !string.IsNullOrEmpty(metadata.transactionId))
             {
-                QuarantineInternal("adjacent-map", map.uniqueID.ToString(), metadata.providerId,
-                    "An ordinary active map cannot be reclassified as a temporary adjacent site.", regionId.ToString(), Now);
+                if (TryRegisterMapFromCreationIntent(map, regionId, out RealityRegionId intended, out bool handled))
+                    return intended == regionId;
+                if (handled) return false;
+            }
+            if (existing == null)
+            {
+                QuarantineInternal("adjacent-map", map.uniqueID.ToString(), owner,
+                    "Only the active materialization intent may classify a new map as an adjacent site.", regionId.ToString(), Now);
                 return false;
             }
             RealityRegionId mapped = RegisterMap(map, regionId);
             if (mapped != regionId) return false;
             RealityAdjacentMapRecord record = existing ?? new RealityAdjacentMapRecord { mapUniqueId = map.uniqueID };
-            record.providerId = metadata.providerId.Trim();
+            record.transactionId = existing == null || string.IsNullOrEmpty(record.transactionId)
+                ? metadata.transactionId : record.transactionId;
+            record.providerId = owner;
             record.regionId = regionId.ToString();
             record.originRegionId = metadata.originRegionId.ToString();
             record.originMapUniqueId = metadata.originMapUniqueId;
-            record.createdTick = metadata.createdTick;
+            record.createdTick = existing == null ? metadata.createdTick : record.createdTick;
             record.lastAccessTick = Now;
             record.lifecycle = RealityAdjacentMapLifecycle.Active;
             record.diagnostic = null;
@@ -769,6 +1053,7 @@ namespace DeferredReality.API
             if (!adjacentMapById.TryGetValue(mapUniqueId, out RealityAdjacentMapRecord record)) return false;
             record.lifecycle = RealityAdjacentMapLifecycle.Retired;
             record.diagnostic = diagnostic;
+            record.retiredTick = Now;
             adjacentMapById.Remove(mapUniqueId);
             Touch("adjacent-map.retired", record.providerId, record.regionId, mapUniqueId.ToString());
             return true;
@@ -782,8 +1067,8 @@ namespace DeferredReality.API
             excursionId = null;
             diagnostic = null;
             if (request == null || string.IsNullOrEmpty(request.providerId) || string.IsNullOrEmpty(request.pawnLoadId) ||
-                !request.originRegionId.IsValid || !request.destinationRegionId.IsValid || request.originMapUniqueId < 0 ||
-                request.destinationMapUniqueId < 0)
+                 !request.originRegionId.IsValid || !request.destinationRegionId.IsValid || request.originMapUniqueId < 0 ||
+                 request.destinationMapUniqueId < 0)
             {
                 diagnostic = "An excursion requires stable provider, pawn, origin, and destination identities.";
                 return false;
@@ -831,7 +1116,8 @@ namespace DeferredReality.API
                 destinationMapUniqueId = request.destinationMapUniqueId,
                 originCellX = request.originCell.x,
                 originCellZ = request.originCell.z,
-                inverseReturnEdge = request.inverseReturnEdge,
+                 inverseReturnEdge = request.inverseReturnEdge,
+                 taskId = string.IsNullOrWhiteSpace(request.taskId) ? excursionId : request.taskId.Trim(),
                 outboundTransferId = request.outboundTransferId,
                 returnTransferId = request.returnTransferId,
                 startTick = request.startTick >= 0 ? request.startTick : Now,
@@ -918,8 +1204,10 @@ namespace DeferredReality.API
                 request.pawns.Count != 1 || !string.Equals(journal.transferId, request.transferId, StringComparison.Ordinal) ||
                 !string.Equals(journal.excursionId, pending.excursionId, StringComparison.Ordinal) ||
                 !string.Equals(request.transferId, pending.outboundTransferId, StringComparison.Ordinal) ||
+                !string.Equals(request.providerTaskId ?? string.Empty, pending.taskId ?? string.Empty, StringComparison.Ordinal) ||
                 !string.Equals(request.providerId, pending.providerId, StringComparison.Ordinal) ||
                 !string.Equals(journal.providerId, pending.providerId, StringComparison.Ordinal) ||
+                !string.Equals(journal.providerTaskId ?? string.Empty, pending.taskId ?? string.Empty, StringComparison.Ordinal) ||
                 !string.Equals(journal.sourceRegionId, pending.originRegionId, StringComparison.Ordinal) ||
                 !string.Equals(journal.destinationRegionId, pending.destinationRegionId, StringComparison.Ordinal) ||
                 request.sourceMap == null || request.destinationMap == null ||
@@ -955,6 +1243,7 @@ namespace DeferredReality.API
             pending.retryTick = Now;
             if (!excursionById.ContainsKey(pending.excursionId)) excursions.Add(pending);
             excursionById[pending.excursionId] = pending;
+            activeExcursionById[pending.excursionId] = pending;
             excursionPawnInstances[pending.excursionId] = pawn;
             pendingExcursions.Remove(pending.excursionId);
             pendingExcursionPawns.Remove(pending.excursionId);
@@ -984,7 +1273,9 @@ namespace DeferredReality.API
                 {
                     existing.status = RealityExcursionStatus.Completed;
                     existing.retryTick = -1;
+                    existing.terminalTick = Now;
                     existing.diagnostic = diagnostic;
+                    activeExcursionById.Remove(excursionId);
                     Touch("excursion.recovered", existing.providerId, existing.originRegionId, excursionId);
                     return true;
                 }
@@ -993,9 +1284,11 @@ namespace DeferredReality.API
             }
             ticket.status = RealityExcursionStatus.Completed;
             ticket.retryTick = -1;
+            ticket.terminalTick = Now;
             ticket.diagnostic = diagnostic;
             excursions.Add(ticket);
             excursionById[excursionId] = ticket;
+            activeExcursionById.Remove(excursionId);
             pendingExcursions.Remove(excursionId);
             Touch("excursion.recovered", ticket.providerId, ticket.originRegionId, excursionId);
             return true;
@@ -1022,6 +1315,8 @@ namespace DeferredReality.API
             ticket.lastTaskHeartbeat = tick;
             ticket.graceDeadline = Math.Max(ticket.graceDeadline, tick + lease);
             ticket.diagnostic = diagnostic;
+            if (adjacentMapById.ContainsKey(ticket.destinationMapUniqueId))
+                TouchAdjacentMap(ticket.destinationMapUniqueId, tick);
             Touch("excursion.heartbeat", ticket.providerId, ticket.destinationRegionId, ticket.excursionId);
             return true;
         }
@@ -1052,6 +1347,8 @@ namespace DeferredReality.API
             ticket.status = status;
             ticket.retryTick = Now;
             ticket.diagnostic = diagnostic;
+            if (status == RealityExcursionStatus.ReturnRequested || status == RealityExcursionStatus.Returning ||
+                status == RealityExcursionStatus.Cancelled) activeExcursionById[ticket.excursionId] = ticket;
             Touch("excursion.return-requested", ticket.providerId, ticket.destinationRegionId, ticket.excursionId);
             return true;
         }
@@ -1062,6 +1359,7 @@ namespace DeferredReality.API
             if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket) ||
                 ticket.status == RealityExcursionStatus.Quarantined) return false;
             ticket.status = RealityExcursionStatus.Returning;
+            activeExcursionById[ticket.excursionId] = ticket;
             ticket.retryTick = retryTick;
             ticket.diagnostic = diagnostic;
             Touch("excursion.returning", ticket.providerId, ticket.destinationRegionId, ticket.excursionId);
@@ -1074,6 +1372,7 @@ namespace DeferredReality.API
             if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket) ||
                 ticket.status == RealityExcursionStatus.Quarantined) return false;
             if (ticket.status != RealityExcursionStatus.Cancelled) ticket.status = RealityExcursionStatus.ReturnRequested;
+            activeExcursionById[ticket.excursionId] = ticket;
             ticket.retryTick = retryTick;
             ticket.diagnostic = diagnostic;
             Touch("excursion.retry", ticket.providerId, ticket.destinationRegionId, ticket.excursionId);
@@ -1101,10 +1400,16 @@ namespace DeferredReality.API
                 pawn.Map.uniqueID != ticket.originMapUniqueId) return false;
             if (excursionPawnInstances.TryGetValue(ticket.excursionId, out Pawn expectedPawn) &&
                 !ReferenceEquals(expectedPawn, pawn)) return false;
-            ticket.status = RealityExcursionStatus.Completed;
+            RealityExcursionStatus returnedStatus = ticket.status == RealityExcursionStatus.Cancelled
+                ? RealityExcursionStatus.Cancelled : RealityExcursionStatus.Completed;
+            ticket.status = returnedStatus;
             ticket.retryTick = -1;
+            ticket.terminalTick = Now;
             ticket.diagnostic = diagnostic;
             excursionPawnInstances.Remove(ticket.excursionId);
+            activeExcursionById.Remove(ticket.excursionId);
+            if (adjacentMapById.ContainsKey(ticket.originMapUniqueId))
+                TouchAdjacentMap(ticket.originMapUniqueId, Now);
             Touch("excursion.completed", ticket.providerId, ticket.originRegionId, ticket.excursionId);
             return true;
         }
@@ -1126,7 +1431,9 @@ namespace DeferredReality.API
                 ticket.originMapUniqueId == request.originMapUniqueId &&
                 ticket.destinationMapUniqueId == request.destinationMapUniqueId &&
                 ticket.outboundTransferId == request.outboundTransferId &&
-                ticket.returnTransferId == request.returnTransferId;
+                ticket.returnTransferId == request.returnTransferId &&
+                (string.IsNullOrEmpty(request.taskId) || string.IsNullOrEmpty(ticket.taskId) ||
+                 ticket.taskId == request.taskId);
         }
 
         /// <summary>Returns detached tickets for diagnostics and recovery tooling.</summary>
@@ -1163,8 +1470,68 @@ namespace DeferredReality.API
         {
             RealityThreadGuard.RequireMainThread();
             RealityCompactionReport report = CompactStorageInternal(now >= 0 ? now : Now);
+            lastCompactionReport = report;
+            storageMaintenanceDirty = false;
+            storageMaintenanceMutationCount = 0;
+            nextStorageMaintenanceTick = (now >= 0 ? now : Now) + StorageMaintenanceIntervalTicks;
             if (report.TotalRemoved > 0) revision++;
             return report;
+        }
+
+        /// <summary>Records bounded adjacent diagnostics without making the monitor history unbounded.</summary>
+        public void RecordAdjacentDiagnostic(string kind, string providerId, string mapOrExcursionId, string message,
+            long tick = -1, bool resolved = false)
+        {
+            RealityThreadGuard.RequireMainThread();
+            long value = tick >= 0 ? tick : Now;
+            string diagnosticId = "adjacent:" + RealityDeterminism.Combine(kind, providerId, mapOrExcursionId, message);
+            RealityAdjacentDiagnosticRecord record = adjacentDiagnostics.FirstOrDefault(item => item != null &&
+                item.diagnosticId == diagnosticId);
+            if (record == null)
+            {
+                record = new RealityAdjacentDiagnosticRecord
+                {
+                    diagnosticId = diagnosticId,
+                    kind = kind,
+                    providerId = providerId,
+                    mapOrExcursionId = mapOrExcursionId,
+                    detectedTick = value,
+                    message = message
+                };
+                adjacentDiagnostics.Add(record);
+            }
+            else if (resolved) record.resolvedTick = value;
+            else record.resolvedTick = -1;
+            if (resolved && record.resolvedTick < 0) record.resolvedTick = value;
+            Touch("adjacent.diagnostic", providerId, mapOrExcursionId, message);
+            MarkStorageMaintenanceDirty(value);
+        }
+
+        public IReadOnlyList<RealityAdjacentDiagnosticRecord> AdjacentDiagnosticSnapshots()
+        {
+            return adjacentDiagnostics.Where(item => item != null).OrderBy(item => item.diagnosticId, StringComparer.Ordinal)
+                .Select(item => item.Clone()).ToList();
+        }
+
+        private void MarkStorageMaintenanceDirty(long tick)
+        {
+            long value = tick >= 0 ? tick : Now;
+            storageMaintenanceDirty = true;
+            storageMaintenanceMutationCount++;
+            if (nextStorageMaintenanceTick <= 0) nextStorageMaintenanceTick = value + StorageMaintenanceIntervalTicks;
+            if (storageMaintenanceMutationCount >= StorageMaintenanceMutationThreshold) nextStorageMaintenanceTick = value;
+        }
+
+        private void RunStorageMaintenance(long now, bool force)
+        {
+            if (!force && (!storageMaintenanceDirty ||
+                (now < nextStorageMaintenanceTick && storageMaintenanceMutationCount < StorageMaintenanceMutationThreshold))) return;
+            RealityCompactionReport report = CompactStorageInternal(now);
+            lastCompactionReport = report;
+            storageMaintenanceDirty = false;
+            storageMaintenanceMutationCount = 0;
+            nextStorageMaintenanceTick = now + StorageMaintenanceIntervalTicks;
+            if (report.TotalRemoved > 0) revision++;
         }
 
         internal RealityWorldState CaptureState()
@@ -1186,7 +1553,10 @@ namespace DeferredReality.API
                 quarantine = quarantine.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 transferJournals = transferJournals.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 adjacentMaps = adjacentMaps.Where(item => item != null).Select(item => item.Clone()).ToList(),
-                excursions = excursions.Where(item => item != null).Select(item => item.Clone()).ToList()
+                excursions = excursions.Where(item => item != null).Select(item => item.Clone()).ToList(),
+                mapCreationIntents = mapCreationIntents.Where(item => item != null).Select(item => item.Clone()).ToList(),
+                adjacentDiagnostics = adjacentDiagnostics.Where(item => item != null).Select(item => item.Clone()).ToList(),
+                operationWatermarks = operationWatermarks.Where(item => item != null).Select(item => item.Clone()).ToList()
             };
         }
 
@@ -1210,9 +1580,16 @@ namespace DeferredReality.API
             transferJournals = state.transferJournals ?? new List<RealityTransferJournalRecord>();
             adjacentMaps = state.adjacentMaps ?? new List<RealityAdjacentMapRecord>();
             excursions = state.excursions ?? new List<RealityExcursionTicket>();
+            mapCreationIntents = state.mapCreationIntents ?? new List<RealityMapCreationIntentRecord>();
+            adjacentDiagnostics = state.adjacentDiagnostics ?? new List<RealityAdjacentDiagnosticRecord>();
+            operationWatermarks = state.operationWatermarks ?? new List<RealityOperationRetentionWatermark>();
+            storageMaintenanceDirty = true;
+            nextStorageMaintenanceTick = Now;
+            storageMaintenanceMutationCount = 0;
             pendingExcursions.Clear();
             pendingExcursionPawns.Clear();
             excursionPawnInstances.Clear();
+            mapCreationIntentById.Clear();
             indexesReady = false;
             processScheduleCacheReady = false;
             RepairAndIndex();
@@ -1314,7 +1691,13 @@ namespace DeferredReality.API
 
         private bool TryResolveMapIdentity(Map map, out RealityRegionId regionId)
         {
+            return TryResolveMapIdentity(map, out regionId, out _);
+        }
+
+        private bool TryResolveMapIdentity(Map map, out RealityRegionId regionId, out RealityMapIdentityClaim selectedClaim)
+        {
             regionId = default(RealityRegionId);
+            selectedClaim = null;
             var claims = new List<RealityMapIdentityClaim>();
             bool invalidClaim = false;
             foreach (IRealityMapIdentityProvider identityProvider in RealityProviderRegistry.OfType<IRealityMapIdentityProvider>())
@@ -1351,6 +1734,7 @@ namespace DeferredReality.API
                         string.Join(",", claims.Select(item => item.StableKey).ToArray()), Now);
                     return false;
                 }
+                selectedClaim = selected;
                 regionId = selected.regionId;
                 return true;
             }
@@ -1379,6 +1763,9 @@ namespace DeferredReality.API
             observationById.Clear();
             appliedOperationIds.Clear();
             regionByLegacyMapId.Clear();
+            mapCreationIntentById.Clear();
+            activeExcursionById.Clear();
+            unresolvedTransferJournalCount = 0;
             RepairList(regions, item => item?.regionId, "region");
             RepairList(populations, item => item?.populationId, "population");
             RepairList(anchors, item => item?.anchorId, "anchor");
@@ -1397,9 +1784,17 @@ namespace DeferredReality.API
             RepairUnique(mapAliases, item => item == null ? null : item.legacyMapId.ToString(), "map-alias");
             RepairUnique(migrations, item => item == null ? null : item.providerId + ":" + item.consumerId, "migration");
             RepairUnique(appliedOperations, item => item?.operationId, "operation");
+            operationWatermarks = operationWatermarks.Where(item => item != null && !string.IsNullOrEmpty(item.providerId) &&
+                !string.IsNullOrEmpty(item.kind) && !string.IsNullOrEmpty(item.domainId) && item.safeThroughTick >= 0).ToList();
+            RepairUnique(operationWatermarks, item => item == null ? null : item.providerId + ":" + item.kind + ":" + item.domainId,
+                "operation-watermark");
+            adjacentDiagnostics = adjacentDiagnostics.Where(item => item != null && !string.IsNullOrEmpty(item.diagnosticId)).ToList();
+            RepairUnique(adjacentDiagnostics, item => item?.diagnosticId, "adjacent-diagnostic");
             RepairUnique(providerPayloads, item => item == null ? null : item.providerId + ":" + item.payloadId, "provider-payload");
             adjacentMaps = RepairAdjacentMaps(adjacentMaps);
             RepairUnique(adjacentMaps, item => item == null ? null : item.mapUniqueId.ToString(), "adjacent-map");
+            mapCreationIntents = RepairMapCreationIntents(mapCreationIntents);
+            RepairUnique(mapCreationIntents, item => item?.transactionId, "map-creation-intent");
             excursions = RepairExcursions(excursions);
             RepairUnique(excursions, item => item?.excursionId, "excursion");
             RepairDuplicateExcursionPawns();
@@ -1411,12 +1806,26 @@ namespace DeferredReality.API
             foreach (RealityAdjacentMapRecord adjacentMap in adjacentMaps)
                 if (adjacentMap != null && adjacentMap.lifecycle != RealityAdjacentMapLifecycle.Retired)
                     adjacentMapById[adjacentMap.mapUniqueId] = adjacentMap;
+            mapCreationIntents = mapCreationIntents.Where(intent => intent != null &&
+                !adjacentMaps.Any(marker => RealityMapCreationPolicy.ShouldClearAfterLoad(intent, marker))).ToList();
+            foreach (RealityMapCreationIntentRecord intent in mapCreationIntents)
+                if (intent != null && !string.IsNullOrEmpty(intent.transactionId)) mapCreationIntentById[intent.transactionId] = intent;
             excursionById.Clear();
             foreach (RealityExcursionTicket excursion in excursions)
-                if (excursion != null && !string.IsNullOrEmpty(excursion.excursionId)) excursionById[excursion.excursionId] = excursion;
+            {
+                if (excursion == null || string.IsNullOrEmpty(excursion.excursionId)) continue;
+                if (string.IsNullOrEmpty(excursion.taskId)) excursion.taskId = excursion.excursionId;
+                if (excursion.status == RealityExcursionStatus.Completed && excursion.terminalTick < 0)
+                    excursion.terminalTick = excursion.lastTaskHeartbeat >= 0 ? excursion.lastTaskHeartbeat : excursion.startTick;
+                excursionById[excursion.excursionId] = excursion;
+                if (!RealityRetentionPolicy.IsTerminalExcursion(excursion))
+                    activeExcursionById[excursion.excursionId] = excursion;
+            }
             providerPayloads = providerPayloads.Where(item => item != null && !string.IsNullOrEmpty(item.providerId)).ToList();
             quarantine = quarantine.Where(item => item != null).ToList();
             transferJournals = transferJournals.Where(item => item != null && !string.IsNullOrEmpty(item.transferId)).ToList();
+            unresolvedTransferJournalCount = transferJournals.Count(item =>
+                RealityRetentionPolicy.IsInterruptedTransfer(item) && !string.IsNullOrEmpty(item.excursionId));
             CompactStorageInternal(Now);
             processById.Clear();
             foreach (RealityProcessRecord process in processes.Where(item => item != null && !string.IsNullOrEmpty(item.processId))) processById[process.processId] = process;
@@ -1425,6 +1834,9 @@ namespace DeferredReality.API
             indexesReady = true;
             processScheduleCacheReady = false;
             EnsureProcessScheduleCache();
+            storageMaintenanceDirty = false;
+            storageMaintenanceMutationCount = 0;
+            nextStorageMaintenanceTick = Now + StorageMaintenanceIntervalTicks;
         }
 
         private void RepairList<T>(List<T> values, Func<T, string> idSelector, string recordType) where T : class
@@ -1522,6 +1934,22 @@ namespace DeferredReality.API
             return repaired;
         }
 
+        private List<RealityMapCreationIntentRecord> RepairMapCreationIntents(List<RealityMapCreationIntentRecord> values)
+        {
+            var repaired = new List<RealityMapCreationIntentRecord>();
+            foreach (RealityMapCreationIntentRecord value in (values ?? new List<RealityMapCreationIntentRecord>()).ToList())
+            {
+                if (!IsValidMapCreationIntent(value))
+                {
+                    QuarantineInternal("map-creation-intent", value?.transactionId, value?.providerId ?? "core",
+                        "Map creation intent has incomplete or invalid persisted identity fields.", value?.regionId, Now);
+                    continue;
+                }
+                repaired.Add(value);
+            }
+            return repaired;
+        }
+
         private List<RealityExcursionTicket> RepairExcursions(List<RealityExcursionTicket> values)
         {
             var repaired = new List<RealityExcursionTicket>();
@@ -1583,9 +2011,20 @@ namespace DeferredReality.API
             return value != null && value.mapUniqueId >= 0 && value.originMapUniqueId >= 0 &&
                 value.mapUniqueId != value.originMapUniqueId && !string.IsNullOrEmpty(value.providerId) &&
                 RealityRegionId.TryParse(value.regionId, out RealityRegionId region) &&
-                string.Equals(region.ProviderNamespace, value.providerId, StringComparison.Ordinal) &&
-                RealityRegionId.TryParse(value.originRegionId, out _) && value.createdTick >= 0 &&
-                value.lastAccessTick >= 0 && Enum.IsDefined(typeof(RealityAdjacentMapLifecycle), value.lifecycle);
+                region.IsValid && RealityRegionId.TryParse(value.originRegionId, out RealityRegionId origin) &&
+                origin.IsValid && value.createdTick >= 0 && value.lastAccessTick >= 0 &&
+                Enum.IsDefined(typeof(RealityAdjacentMapLifecycle), value.lifecycle);
+        }
+
+        private static bool IsValidMapCreationIntent(RealityMapCreationIntentRecord value)
+        {
+            return value != null && !string.IsNullOrEmpty(value.transactionId) && !string.IsNullOrEmpty(value.providerId) &&
+                RealityRegionId.TryParse(value.regionId, out RealityRegionId region) &&
+                region.IsValid && RealityRegionId.TryParse(value.originRegionId, out RealityRegionId origin) &&
+                origin.IsValid && value.originMapUniqueId >= 0 &&
+                value.preexistingMapUniqueId >= -1 && value.createdMapUniqueId >= -1 && value.createdTick >= 0 &&
+                Enum.IsDefined(typeof(RealityAdjacentMapLifecycle), value.lifecycle) &&
+                region.IsValid;
         }
 
         private static bool IsValidExcursionTicket(RealityExcursionTicket value)
@@ -1596,9 +2035,9 @@ namespace DeferredReality.API
                 value.originMapUniqueId != value.destinationMapUniqueId &&
                 !string.IsNullOrEmpty(value.outboundTransferId) && !string.IsNullOrEmpty(value.returnTransferId) &&
                 !string.IsNullOrEmpty(value.inverseReturnEdge) && value.startTick >= 0 &&
-                RealityRegionId.TryParse(value.originRegionId, out _) &&
+                RealityRegionId.TryParse(value.originRegionId, out RealityRegionId origin) && origin.IsValid &&
                 RealityRegionId.TryParse(value.destinationRegionId, out RealityRegionId destination) &&
-                string.Equals(destination.ProviderNamespace, value.providerId, StringComparison.Ordinal) &&
+                destination.IsValid &&
                 Enum.IsDefined(typeof(RealityExcursionStatus), value.status);
         }
 
@@ -1625,6 +2064,9 @@ namespace DeferredReality.API
             if (value is RealityProviderPayload providerPayload) return providerPayload.schemaVersion;
             if (value is RealityAdjacentMapRecord adjacentMap) return adjacentMap.schemaVersion;
             if (value is RealityExcursionTicket excursion) return excursion.schemaVersion;
+            if (value is RealityMapCreationIntentRecord intent) return intent.schemaVersion;
+            if (value is RealityOperationRetentionWatermark watermark) return watermark.schemaVersion;
+            if (value is RealityAdjacentDiagnosticRecord diagnostic) return diagnostic.schemaVersion;
             return 0;
         }
 
@@ -1641,7 +2083,10 @@ namespace DeferredReality.API
             if (value is RealityAppliedOperation operation) return operation.tick;
             if (value is RealityConflictReport conflict) return conflict.detectedTick;
             if (value is RealityAdjacentMapRecord adjacentMap) return adjacentMap.lastAccessTick;
-            if (value is RealityExcursionTicket excursion) return excursion.lastTaskHeartbeat;
+            if (value is RealityExcursionTicket excursion) return excursion.terminalTick >= 0 ? excursion.terminalTick : excursion.lastTaskHeartbeat;
+            if (value is RealityMapCreationIntentRecord intent) return intent.createdTick;
+            if (value is RealityOperationRetentionWatermark watermark) return watermark.updatedTick;
+            if (value is RealityAdjacentDiagnosticRecord diagnostic) return diagnostic.resolvedTick >= 0 ? diagnostic.resolvedTick : diagnostic.detectedTick;
             return null;
         }
 
@@ -1707,18 +2152,55 @@ namespace DeferredReality.API
             {
                 if (operation == null) return false;
                 if (!RealityProviderRegistry.TryGetRegistration(operation.providerId, out RealityProviderRegistration registration)) return true;
-                return !RealityRetentionPolicy.CanExpireOperation(registration, operation.kind, operation.tick, now);
+                return !RealityRetentionPolicy.CanExpireOperation(registration, operation, operationWatermarks, now);
             }).ToList();
             report.appliedOperationsRemoved = Math.Max(0, before - appliedOperations.Count);
             appliedOperationIds.Clear();
             foreach (RealityAppliedOperation operation in appliedOperations) appliedOperationIds.Add(operation.operationId);
 
             report.cancelledProcessesRemoved = CompactCancelledProcesses(now);
+            before = excursions.Count;
+            excursions = RealityRetentionPolicy.SelectExcursions(excursions, now).ToList();
+            report.excursionsRemoved = Math.Max(0, before - excursions.Count);
+            excursionById.Clear();
+            activeExcursionById.Clear();
+            foreach (RealityExcursionTicket ticket in excursions.Where(item => item != null))
+            {
+                excursionById[ticket.excursionId] = ticket;
+                if (!RealityRetentionPolicy.IsTerminalExcursion(ticket)) activeExcursionById[ticket.excursionId] = ticket;
+            }
+            before = adjacentMaps.Count;
+            List<RealityAdjacentMapRecord> retainedAdjacentMaps = RealityRetentionPolicy.SelectRetiredAdjacentMaps(adjacentMaps, now).ToList();
+            HashSet<int> retainedAdjacentMapIds = new HashSet<int>(retainedAdjacentMaps.Select(record => record.mapUniqueId));
+            foreach (RealityAdjacentMapRecord record in adjacentMaps.Where(item => item != null &&
+                item.lifecycle == RealityAdjacentMapLifecycle.Retired && HasAdjacentMapRecoveryReference(item)))
+            {
+                if (retainedAdjacentMapIds.Add(record.mapUniqueId)) retainedAdjacentMaps.Add(record);
+            }
+            adjacentMaps = retainedAdjacentMaps.OrderBy(record => record.mapUniqueId).ToList();
+            report.retiredAdjacentMapsRemoved = Math.Max(0, before - adjacentMaps.Count);
+            before = adjacentDiagnostics.Count;
+            adjacentDiagnostics = RealityRetentionPolicy.SelectResolvedAdjacentDiagnostics(adjacentDiagnostics, now).ToList();
+            report.adjacentDiagnosticsRemoved = Math.Max(0, before - adjacentDiagnostics.Count);
             report.mapAliasesRemoved = CompactMapAliases();
             regionByLegacyMapId.Clear();
             foreach (RealityMapAlias alias in mapAliases.Where(item => item != null).OrderBy(item => item.legacyMapId))
                 if (!regionByLegacyMapId.ContainsKey(alias.legacyMapId)) regionByLegacyMapId[alias.legacyMapId] = alias.regionId;
+            unresolvedTransferJournalCount = transferJournals.Count(item =>
+                RealityRetentionPolicy.IsInterruptedTransfer(item) && !string.IsNullOrEmpty(item.excursionId));
             return report;
+        }
+
+        private bool HasAdjacentMapRecoveryReference(RealityAdjacentMapRecord marker)
+        {
+            if (marker == null) return false;
+            return excursions.Any(ticket => ticket != null &&
+                (ticket.originMapUniqueId == marker.mapUniqueId || ticket.destinationMapUniqueId == marker.mapUniqueId ||
+                 ticket.originRegionId == marker.regionId || ticket.destinationRegionId == marker.regionId)) ||
+                transferJournals.Any(journal => journal != null && RealityRetentionPolicy.IsInterruptedTransfer(journal) &&
+                    (journal.sourceMapUniqueId == marker.mapUniqueId || journal.destinationMapUniqueId == marker.mapUniqueId ||
+                     journal.sourceRegionId == marker.regionId || journal.destinationRegionId == marker.regionId)) ||
+                mapCreationIntents.Any(intent => intent != null && intent.createdMapUniqueId == marker.mapUniqueId);
         }
 
         private void CompactAuditRecords()
@@ -1831,11 +2313,20 @@ namespace DeferredReality.API
                  Contains(marker.diagnostic, id)))) return true;
             if (excursions.Any(ticket => ticket != null &&
                 (Contains(ticket.excursionId, id) || Contains(ticket.providerId, id) || Contains(ticket.pawnLoadId, id) ||
-                 Contains(ticket.originRegionId, id) || Contains(ticket.destinationRegionId, id) ||
+                  Contains(ticket.taskId, id) ||
+                  Contains(ticket.originRegionId, id) || Contains(ticket.destinationRegionId, id) ||
                  Contains(ticket.outboundTransferId, id) || Contains(ticket.returnTransferId, id) ||
                  Contains(ticket.diagnostic, id)))) return true;
             if (appliedOperations.Any(operation => operation != null &&
-                (Contains(operation.operationId, id) || Contains(operation.providerId, id) || Contains(operation.kind, id)))) return true;
+                (Contains(operation.operationId, id) || Contains(operation.providerId, id) || Contains(operation.kind, id) ||
+                 Contains(operation.domainId, id)))) return true;
+            if (adjacentDiagnostics.Any(diagnostic => diagnostic != null &&
+                (Contains(diagnostic.diagnosticId, id) || Contains(diagnostic.kind, id) ||
+                 Contains(diagnostic.providerId, id) || Contains(diagnostic.mapOrExcursionId, id) ||
+                 Contains(diagnostic.message, id)))) return true;
+            if (operationWatermarks.Any(watermark => watermark != null &&
+                (Contains(watermark.providerId, id) || Contains(watermark.kind, id) || Contains(watermark.domainId, id) ||
+                 Contains(watermark.proof, id)))) return true;
             return conflicts.Any(conflict => conflict != null &&
                 (Contains(conflict.conflictId, id) || Contains(conflict.regionId, id) || Contains(conflict.subjectId, id) ||
                  Contains(conflict.constraintIds, id) || Contains(conflict.reason, id)));
@@ -1863,7 +2354,10 @@ namespace DeferredReality.API
                  marker.regionId == alias.regionId || marker.originRegionId == alias.regionId))) return false;
             if (excursions.Any(ticket => ticket != null &&
                 (ticket.originMapUniqueId == alias.legacyMapId || ticket.destinationMapUniqueId == alias.legacyMapId ||
-                 ticket.originRegionId == alias.regionId || ticket.destinationRegionId == alias.regionId))) return false;
+                  ticket.originRegionId == alias.regionId || ticket.destinationRegionId == alias.regionId))) return false;
+            if (mapCreationIntents.Any(intent => intent != null &&
+                (intent.preexistingMapUniqueId == alias.legacyMapId || intent.createdMapUniqueId == alias.legacyMapId ||
+                 intent.regionId == alias.regionId || intent.originRegionId == alias.regionId))) return false;
             if (processes.Any(process => process != null && Contains(process.payload, legacyId))) return false;
             if (constraints.Any(constraint => constraint != null &&
                 (Contains(constraint.payload, legacyId) || Contains(constraint.causalParentIds, legacyId) ||
@@ -1923,5 +2417,8 @@ namespace DeferredReality.API
         internal List<RealityTransferJournalRecord> transferJournals;
         internal List<RealityAdjacentMapRecord> adjacentMaps;
         internal List<RealityExcursionTicket> excursions;
+        internal List<RealityMapCreationIntentRecord> mapCreationIntents;
+        internal List<RealityAdjacentDiagnosticRecord> adjacentDiagnostics;
+        internal List<RealityOperationRetentionWatermark> operationWatermarks;
     }
 }
