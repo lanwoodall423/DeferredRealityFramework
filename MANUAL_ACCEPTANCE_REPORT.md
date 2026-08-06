@@ -29,5 +29,17 @@ RimWorld execution.
 - Provider adapter builds and provider-specific runtime tests remain the
   responsibility of consuming repositories.
 
+## Latest Runtime Attempt
+
+- `Wildlife\DevTools\Run-WildlifeTests.ps1 -TimeoutSeconds 60` returned
+  `summary=SERVER_TIMEOUT`; no `READY`/`DONE` status or test report was produced.
+  The spawned `RimWorldWin64` process was stopped after the timeout.
+- `RimWorldDevBridge\DevTools\devbridge.ps1 discover` returned
+  `{"available":false,"reason":"bridge_not_active"}`.
+- `Player.log` reached RimWorld 1.6.4871 assembly loading, Prepatcher completion,
+  and mod loading. No Deferred Reality undefined-target exception appeared in
+  the captured log, but the test server never became ready, so this is not a
+  startup or gameplay pass.
+
 Adjacent regions must remain disabled until every manual row has attached live
 evidence.
