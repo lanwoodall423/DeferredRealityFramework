@@ -616,6 +616,104 @@ namespace DeferredReality.API
             return regionId;
         }
 
+        /// <summary>
+        /// Rebinds one legacy map alias to a provider-owned identity during an explicit migration.
+        /// Normal registration deliberately refuses alias remapping; this additive API is the
+        /// narrowly scoped escape hatch for providers correcting an older, persisted identity.
+        /// </summary>
+        public bool TryMigrateMapIdentity(Map map, RealityRegionId regionId, out RealityRegionId previousRegion)
+        {
+            RealityThreadGuard.RequireMainThread();
+            previousRegion = default(RealityRegionId);
+            if (map == null || !map.Tile.Valid || !regionId.IsValid || map.Tile != (PlanetTile)regionId.WorldTile)
+                return false;
+            EnsureIndexes();
+
+            if (!regionByLegacyMapId.TryGetValue(map.uniqueID, out string previousId) ||
+                !RealityRegionId.TryParse(previousId, out RealityRegionId existing))
+            {
+                return RegisterMap(map, regionId).IsValid;
+            }
+            previousRegion = existing;
+            if (existing == regionId) return MarkMapActive(regionId, map);
+
+            RealityRegionDescriptor previousRecord = RegionRecord(existing.ToString());
+            if (previousRecord != null && previousRecord.activeMapUniqueId >= 0 &&
+                previousRecord.activeMapUniqueId != map.uniqueID)
+            {
+                QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
+                    "A persisted map identity is active on another map.", existing.ToString(), Now);
+                return false;
+            }
+            RealityRegionDescriptor targetRecord = RegionRecord(regionId.ToString());
+            if (targetRecord != null && targetRecord.activeMapUniqueId >= 0 &&
+                targetRecord.activeMapUniqueId != map.uniqueID)
+            {
+                QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
+                    "The migrated map identity is active on another map.", regionId.ToString(), Now);
+                return false;
+            }
+
+            RealityRegionDescriptor previousBackup = previousRecord?.Clone();
+            RealityRegionDescriptor targetBackup = targetRecord?.Clone();
+            EnsureRegion(regionId, "World tile " + regionId.WorldTile, Now);
+            targetRecord = RegionRecord(regionId.ToString());
+            if (previousRecord != null)
+            {
+                previousRecord.activeMapUniqueId = -1;
+                previousRecord.fidelity = populations.Any(item => item?.regionId == previousRecord.regionId)
+                    ? RealityFidelity.Statistical : RealityFidelity.Dormant;
+                previousRecord.lastUpdateTick = Now;
+            }
+            RealityMapAlias alias = mapAliases.FirstOrDefault(item => item != null && item.legacyMapId == map.uniqueID);
+            if (alias == null)
+            {
+                RestoreMapIdentityMigration(previousBackup, targetBackup, map.uniqueID, previousId, null, regionId.ToString());
+                return false;
+            }
+            alias.regionId = regionId.ToString();
+            alias.migratedTick = Now;
+            regionByLegacyMapId[map.uniqueID] = regionId.ToString();
+            if (!MarkMapActive(regionId, map))
+            {
+                RestoreMapIdentityMigration(previousBackup, targetBackup, map.uniqueID, previousId, alias,
+                    regionId.ToString());
+                return false;
+            }
+            Touch("map.identity.migrated", regionId.ProviderNamespace, regionId.ToString(), previousId);
+            return true;
+        }
+
+        private void RestoreMapIdentityMigration(RealityRegionDescriptor previousBackup,
+            RealityRegionDescriptor targetBackup, int mapId, string previousId, RealityMapAlias alias, string targetId)
+        {
+            if (previousBackup != null)
+            {
+                int index = regions.FindIndex(item => item?.regionId == previousBackup.regionId);
+                if (index >= 0) regions[index] = previousBackup;
+                else regions.Add(previousBackup);
+                regionById[previousBackup.regionId] = previousBackup;
+            }
+            if (targetBackup != null)
+            {
+                int index = regions.FindIndex(item => item?.regionId == targetBackup.regionId);
+                if (index >= 0) regions[index] = targetBackup;
+                else regions.Add(targetBackup);
+                regionById[targetBackup.regionId] = targetBackup;
+            }
+            else if (!string.IsNullOrEmpty(targetId))
+            {
+                regions.RemoveAll(item => item?.regionId == targetId);
+                regionById.Remove(targetId);
+            }
+            if (alias != null)
+            {
+                alias.regionId = previousId;
+                alias.migratedTick = Now;
+            }
+            regionByLegacyMapId[mapId] = previousId;
+        }
+
         /// <summary>Releases the active-map link while preserving latent state for future materialization.</summary>
         public void UnregisterMap(Map map)
         {

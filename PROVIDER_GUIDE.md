@@ -134,6 +134,14 @@ reclassified. Map readiness and provider map-component callbacks may both call
 Existing ordinary maps, persisted aliases, stale intents, and same-tile conflicts
 fail closed.
 
+Providers repairing a legacy alias that was persisted against the wrong region may
+use `DeferredRealityWorldComponent.TryMigrateMapIdentity` during their map
+component initialization. It validates the destination tile, preserves the old
+region as dormant state, atomically rebinds the legacy `Map.uniqueID` alias, and
+restores the prior alias/region state if the new active-map link cannot be set.
+This additive API is intentionally separate from `RegisterMap(map, regionId)`,
+which continues to reject arbitrary alias remapping.
+
 Compression ownership is explicit: `RealityCompressionRequest.providerId`, or the
 region provider namespace when omitted, selects one deterministic provider list.
 That same list is used for `CanCompress`, `Prepare`, `Validate`, `Commit`, and

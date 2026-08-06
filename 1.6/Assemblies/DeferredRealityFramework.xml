@@ -709,6 +709,13 @@
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RegisterMap(Verse.Map,DeferredReality.API.RealityRegionId)">
             <summary>Associates a map with an explicit stable region, preserving the legacy tile-based overload.</summary>
         </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryMigrateMapIdentity(Verse.Map,DeferredReality.API.RealityRegionId,DeferredReality.API.RealityRegionId@)">
+            <summary>
+            Rebinds one legacy map alias to a provider-owned identity during an explicit migration.
+            Normal registration deliberately refuses alias remapping; this additive API is the
+            narrowly scoped escape hatch for providers correcting an older, persisted identity.
+            </summary>
+        </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UnregisterMap(Verse.Map)">
             <summary>Releases the active-map link while preserving latent state for future materialization.</summary>
         </member>
