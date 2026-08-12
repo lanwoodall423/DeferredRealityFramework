@@ -716,6 +716,12 @@
             narrowly scoped escape hatch for providers correcting an older, persisted identity.
             </summary>
         </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryMigrateMapIdentity(Verse.Map,DeferredReality.API.RealityRegionId,DeferredReality.API.RealityRegionId@,System.String@)">
+            <summary>
+            Rebinds a legacy map alias and returns a bounded diagnostic when the migration is rejected.
+            The original overload remains the compatibility surface for callers that only need success.
+            </summary>
+        </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UnregisterMap(Verse.Map)">
             <summary>Releases the active-map link while preserving latent state for future materialization.</summary>
         </member>
@@ -1144,6 +1150,9 @@
             The first serialized valid record keeps its list position. A candidate replaces its value only when an
             explicit schema version or update tick proves it newer; otherwise serialized order is authoritative.
             </summary>
+        </member>
+        <member name="T:DeferredReality.Testing.DeferredRealityInGameTestComponent">
+            <summary>Runs the framework's provider-neutral live-world checks after a DevBridge quicktest map is ready.</summary>
         </member>
     </members>
 </doc>

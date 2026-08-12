@@ -623,19 +623,40 @@ namespace DeferredReality.API
         /// </summary>
         public bool TryMigrateMapIdentity(Map map, RealityRegionId regionId, out RealityRegionId previousRegion)
         {
+            return TryMigrateMapIdentity(map, regionId, out previousRegion, out _);
+        }
+
+        /// <summary>
+        /// Rebinds a legacy map alias and returns a bounded diagnostic when the migration is rejected.
+        /// The original overload remains the compatibility surface for callers that only need success.
+        /// </summary>
+        public bool TryMigrateMapIdentity(Map map, RealityRegionId regionId, out RealityRegionId previousRegion,
+            out string diagnostic)
+        {
             RealityThreadGuard.RequireMainThread();
             previousRegion = default(RealityRegionId);
+            diagnostic = string.Empty;
             if (map == null || !map.Tile.Valid || !regionId.IsValid || map.Tile != (PlanetTile)regionId.WorldTile)
+            {
+                diagnostic = "The map tile and destination region identity do not match.";
                 return false;
+            }
             EnsureIndexes();
 
             if (!regionByLegacyMapId.TryGetValue(map.uniqueID, out string previousId) ||
                 !RealityRegionId.TryParse(previousId, out RealityRegionId existing))
             {
-                return RegisterMap(map, regionId).IsValid;
+                if (RegisterMap(map, regionId).IsValid) return true;
+                diagnostic = "The destination region could not be registered for the map.";
+                return false;
             }
             previousRegion = existing;
-            if (existing == regionId) return MarkMapActive(regionId, map);
+            if (existing == regionId)
+            {
+                if (MarkMapActive(regionId, map)) return true;
+                diagnostic = "The destination region could not be activated for the map.";
+                return false;
+            }
 
             RealityRegionDescriptor previousRecord = RegionRecord(existing.ToString());
             if (previousRecord != null && previousRecord.activeMapUniqueId >= 0 &&
@@ -643,6 +664,7 @@ namespace DeferredReality.API
             {
                 QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
                     "A persisted map identity is active on another map.", existing.ToString(), Now);
+                diagnostic = "The previous map identity is active on another map.";
                 return false;
             }
             RealityRegionDescriptor targetRecord = RegionRecord(regionId.ToString());
@@ -651,6 +673,7 @@ namespace DeferredReality.API
             {
                 QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
                     "The migrated map identity is active on another map.", regionId.ToString(), Now);
+                diagnostic = "The destination map identity is active on another map.";
                 return false;
             }
 
@@ -669,6 +692,7 @@ namespace DeferredReality.API
             if (alias == null)
             {
                 RestoreMapIdentityMigration(previousBackup, targetBackup, map.uniqueID, previousId, null, regionId.ToString());
+                diagnostic = "The persisted map alias disappeared during migration.";
                 return false;
             }
             alias.regionId = regionId.ToString();
@@ -678,6 +702,7 @@ namespace DeferredReality.API
             {
                 RestoreMapIdentityMigration(previousBackup, targetBackup, map.uniqueID, previousId, alias,
                     regionId.ToString());
+                diagnostic = "The destination region rejected activation; the previous identity was restored.";
                 return false;
             }
             Touch("map.identity.migrated", regionId.ProviderNamespace, regionId.ToString(), previousId);

@@ -55,6 +55,29 @@ Focused checks cover:
 - verify active versus terminal ticket indexing and recoverable cancelled tickets;
 - verify provider task cleanup occurs only after terminal recovery is complete.
 
+## Automatic in-game checks
+
+When DevBridge2 launches RimWorld with `-quicktest`, it supplies a launch ID.
+The framework's `DeferredRealityInGameTestComponent` waits for a playable map,
+then runs the provider-neutral live-world suite automatically on the RimWorld
+main thread. It checks world/map lifecycle registration, stable map identity,
+diagnostics repeatability, audit errors, provider registration IDs, adjacent
+ownership and construction guards, adjacent diagnostics, active excursion
+ownership, map-creation intents, and that read-only diagnostics do not mutate
+the world.
+
+The suite is owned by this mod. It does not ask DevBridge to inspect game state,
+create maps, transfer Pawns, or judge results. The latest machine-readable report
+is written to `TestResults/DeferredReality.InGameTests.json` and every case is
+also emitted to the RimWorld log. `DEFERRED_REALITY_AUTO_TESTS=1` can opt into
+the same runner for a non-DevBridge launch; the DevBridge launch ID is the normal
+automatic trigger.
+
+Provider-owned map creation, Pawn transfer, construction attempts on a marked
+site, and save/load during outbound and return remain outside this framework-only
+suite. They require a consuming provider's test fixture and are covered by the
+manual checklist below.
+
 ## Provider integration checks
 
 Each consuming provider tests its own legacy migration, gameplay ownership,
