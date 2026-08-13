@@ -51,7 +51,8 @@ namespace DeferredReality.BridgeAdapter
                     break;
                 case "DR_REGIONS":
                     foreach (RealityRegionSnapshot region in world.RegionSnapshots())
-                        result.AddLine(region.id + " | " + region.fidelity + " | observed=" + region.observationLevel + " | map=" + region.activeMapUniqueId);
+                        result.AddLine(region.id + " | fidelity=" + region.fidelity + " | authority=" + region.authority +
+                            " | observed=" + region.observationLevel + " | projectionMap=" + region.projectionMapUniqueId);
                     break;
                 case "DR_PROCESSES":
                     foreach (RealityProcessSnapshot process in world.ProcessSnapshots())
@@ -67,8 +68,15 @@ namespace DeferredReality.BridgeAdapter
                     foreach (string line in audit.errors.Concat(audit.warnings)) result.AddLine(line);
                     break;
                 case "DR_COMPRESSION_DRY_RUN":
+                    if (context?.Map == null || !RealityRegionMappingService.TryFromProjectionMapId(context.Map.uniqueID,
+                        out RealityRegionId compressionRegion))
+                    {
+                        result.AddLine("compression.no-region: The current map has no registered live projection binding.");
+                        result.Add("vetoes", 1);
+                        break;
+                    }
                     IReadOnlyList<RealityVeto> vetoes = RealityCompressionService.CanCompress(world,
-                        new RealityCompressionRequest { Map = context.Map, regionId = RealityRegionMappingService.ForMap(context.Map), now = world.Now, dryRun = true });
+                        new RealityCompressionRequest { Map = context.Map, regionId = compressionRegion, now = world.Now, dryRun = true });
                     foreach (RealityVeto veto in vetoes) result.AddLine(veto.ToString());
                     result.Add("vetoes", vetoes.Count);
                     break;

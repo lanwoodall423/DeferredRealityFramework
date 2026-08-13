@@ -61,7 +61,13 @@ namespace DeferredReality.Simulation
                 RealityProcessRecord process = world.ProcessRecord(due[i].processId);
                 if (process == null || process.cancelled || process.paused || process.nextDueTick > now) continue;
                 report.attempted++;
-                if (!RealityProviderRegistry.TryGet(process.providerId, out IRealityProvider registered) || !(registered is IRealityProcessProvider provider))
+                if (RealityRegionId.TryParse(process.regionId, out RealityRegionId processRegion) &&
+                    world.TryGetRegion(processRegion, out RealityRegionSnapshot regionSnapshot))
+                {
+                    // Provider resolution happens before projection gating so a provider can declare
+                    // whether a narrowly scoped process is legal while a live Map is authoritative.
+                }
+                if (!RealityProviderRegistry.TryGetCapability(process.providerId, out IRealityProcessProvider provider))
                 {
                     RealityProcessPausePolicy.SetProviderUnavailable(process,
                         "Provider is unavailable; process retained and suspended.");
@@ -69,6 +75,91 @@ namespace DeferredReality.Simulation
                     world.Touch("process.paused", process.providerId, process.regionId, process.processId);
                     report.paused++;
                     continue;
+                }
+                RealityRegionSnapshot currentRegion = null;
+                if (RealityRegionId.TryParse(process.regionId, out RealityRegionId parsedRegion) &&
+                    world.TryGetRegion(parsedRegion, out RealityRegionSnapshot resolvedRegion)) currentRegion = resolvedRegion;
+                RealityProcessFidelityPolicy fidelityPolicy = null;
+                if (currentRegion != null)
+                {
+                    try { fidelityPolicy = provider.DescribeProcessFidelity(process.Clone(), currentRegion); }
+                    catch (Exception exception)
+                    {
+                        RealityProcessPausePolicy.SetProviderFailure(process,
+                            "Provider fidelity policy failed: " + exception.Message,
+                            now + Math.Max(1, options.retryDelayTicks));
+                        world.RefreshProcessScheduleCache();
+                        world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                        world.Quarantine("process.fidelity-policy", process.processId, process.providerId,
+                            exception.Message, process.payload);
+                        report.paused++;
+                        continue;
+                    }
+                    fidelityPolicy = fidelityPolicy ?? new RealityProcessFidelityPolicy();
+                    bool legalAtCurrentFidelity = fidelityPolicy.IsLegalAt(currentRegion.fidelity);
+                    if (currentRegion.authority == RealityRegionAuthority.LiveProjection &&
+                        (!fidelityPolicy.runsWhileLiveProjection || !legalAtCurrentFidelity))
+                    {
+                        RealityProcessPausePolicy.SetProjectionAuthoritative(process,
+                            "Aggregate simulation is suspended while the live Map projection is authoritative.");
+                        world.RefreshProcessScheduleCache();
+                        world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                        report.paused++;
+                        continue;
+                    }
+                    if (currentRegion.authority != RealityRegionAuthority.Latent &&
+                        currentRegion.authority != RealityRegionAuthority.LiveProjection)
+                    {
+                        RealityProcessPausePolicy.SetProjectionTransition(process,
+                            "Aggregate simulation is suspended while the region projection is transitioning.");
+                        world.RefreshProcessScheduleCache();
+                        world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                        report.paused++;
+                        continue;
+                    }
+                    if (!legalAtCurrentFidelity)
+                    {
+                        if (fidelityPolicy.mayRequestEscalation &&
+                             RealityFidelityRules.IsHigher(fidelityPolicy.escalationTarget, currentRegion.fidelity))
+                        {
+                            var escalation = new RealityProcessEscalationRequest
+                            {
+                                requestedFidelity = fidelityPolicy.escalationTarget,
+                                reason = RealityFidelityEscalationReason.InsufficientResolution,
+                                disposition = RealityFidelityEscalationDisposition.Request,
+                                policy = fidelityPolicy.escalationPolicy
+                            };
+                            RealityFidelityEscalationRecord request = world.RequestFidelityEscalation(process, escalation,
+                                currentRegion, now);
+                            if (request == null ||
+                                (request.status != RealityFidelityEscalationStatus.Pending &&
+                                 request.status != RealityFidelityEscalationStatus.Approved))
+                            {
+                                RealityProcessPausePolicy.SetProviderFailure(process,
+                                    "The provider's fidelity escalation could not be persisted as pending.",
+                                    now + Math.Max(1, options.retryDelayTicks));
+                                world.RefreshProcessScheduleCache();
+                                world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                                world.Quarantine("process.fidelity-escalation", process.processId, process.providerId,
+                                    "Policy escalation request was already resolved or could not be persisted.", process.payload);
+                                report.failed++;
+                                totalFailures++;
+                                continue;
+                            }
+                            RealityProcessPausePolicy.SetFidelityEscalation(process, request?.requestId,
+                                "Process requires higher fidelity before it can continue.");
+                            world.RefreshProcessScheduleCache();
+                            world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                            report.paused++;
+                            continue;
+                        }
+                        RealityProcessPausePolicy.SetProviderRequested(process,
+                            "Process is not legal at the region's current fidelity and declared no escalation path.", now);
+                        world.RefreshProcessScheduleCache();
+                        world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                        report.paused++;
+                        continue;
+                    }
                 }
                 long fromTick = process.executionCount > 0 || process.nextDueTick > process.lastExecutionTick
                     ? process.lastExecutionTick : process.nextDueTick;
@@ -127,6 +218,61 @@ namespace DeferredReality.Simulation
                     report.failed++;
                     totalFailures++;
                     continue;
+                }
+                if (result.escalation != null)
+                {
+                    if (!result.escalation.IsValid)
+                    {
+                        RealityProcessPausePolicy.SetProviderFailure(process,
+                            "Provider returned an invalid typed fidelity escalation request.",
+                            now + Math.Max(1, options.retryDelayTicks));
+                        world.RefreshProcessScheduleCache();
+                        world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                        world.Quarantine("process.fidelity-escalation", process.processId, process.providerId,
+                            "Invalid typed escalation request.", process.payload);
+                        report.failed++;
+                        totalFailures++;
+                        continue;
+                    }
+                    if (currentRegion == null)
+                    {
+                        RealityProcessPausePolicy.SetProviderFailure(process,
+                            "Provider requested fidelity escalation for an unregistered region.",
+                            now + Math.Max(1, options.retryDelayTicks));
+                        world.RefreshProcessScheduleCache();
+                        world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                        world.Quarantine("process.fidelity-escalation", process.processId, process.providerId,
+                            "Typed escalation could not be linked to a registered region.", process.payload);
+                        report.failed++;
+                        totalFailures++;
+                        continue;
+                    }
+                    RealityFidelityEscalationRecord escalation = world.RequestFidelityEscalation(process,
+                        result.escalation, currentRegion, now);
+                    if (result.escalation.disposition == RealityFidelityEscalationDisposition.Request)
+                    {
+                        if (escalation == null ||
+                            (escalation.status != RealityFidelityEscalationStatus.Pending &&
+                             escalation.status != RealityFidelityEscalationStatus.Approved))
+                        {
+                            RealityProcessPausePolicy.SetProviderFailure(process,
+                                "Provider escalation request could not be persisted as pending.",
+                                now + Math.Max(1, options.retryDelayTicks));
+                            world.RefreshProcessScheduleCache();
+                            world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                            world.Quarantine("process.fidelity-escalation", process.processId, process.providerId,
+                                "Typed escalation request was already resolved or could not be persisted.", process.payload);
+                            report.failed++;
+                            totalFailures++;
+                            continue;
+                        }
+                        RealityProcessPausePolicy.SetFidelityEscalation(process, escalation?.requestId,
+                            "Process requested higher fidelity before resolving this event.");
+                        world.RefreshProcessScheduleCache();
+                        world.Touch("process.paused", process.providerId, process.regionId, process.processId);
+                        report.paused++;
+                        continue;
+                    }
                 }
                 process.lastExecutionTick = now;
                 process.executionCount++;

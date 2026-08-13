@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Verse;
 
@@ -10,17 +11,15 @@ namespace DeferredReality.API
     {
         public string key;
         public string value;
-        public int schemaVersion = 1;
 
         /// <inheritdoc />
         public void ExposeData()
         {
             Scribe_Values.Look(ref key, "key");
             Scribe_Values.Look(ref value, "value");
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
         }
 
-        internal RealityPayloadField Clone() => new RealityPayloadField { key = key, value = value, schemaVersion = schemaVersion };
+        internal RealityPayloadField Clone() => new RealityPayloadField { key = key, value = value };
     }
 
     /// <summary>Explicitly versioned provider data. It is opaque by design and never treated as an object graph.</summary>
@@ -28,25 +27,22 @@ namespace DeferredReality.API
     {
         public string providerId;
         public string payloadId;
-        public int schemaVersion = 1;
         public string data;
-        public RealityLifecycleState lifecycle = RealityLifecycleState.Active;
+        public RealityPayloadLifecycle lifecycle = RealityPayloadLifecycle.Active;
 
         /// <inheritdoc />
         public void ExposeData()
         {
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref payloadId, "payloadId");
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref data, "data");
-            Scribe_Values.Look(ref lifecycle, "lifecycle", RealityLifecycleState.Active);
+            Scribe_Values.Look(ref lifecycle, "lifecycle", RealityPayloadLifecycle.Active);
         }
 
         internal RealityProviderPayload Clone() => new RealityProviderPayload
         {
             providerId = providerId,
             payloadId = payloadId,
-            schemaVersion = schemaVersion,
             data = data,
             lifecycle = lifecycle
         };
@@ -55,7 +51,6 @@ namespace DeferredReality.API
     /// <summary>Low-resolution environmental state queryable without a Map.</summary>
     public sealed class RealityEnvironmentSummary : IExposable
     {
-        public int schemaVersion = 1;
         public string biomeDefName;
         public string climateClass;
         public float minimumTemperature = -20f;
@@ -77,7 +72,6 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref biomeDefName, "biomeDefName");
             Scribe_Values.Look(ref climateClass, "climateClass");
             Scribe_Values.Look(ref minimumTemperature, "minimumTemperature", -20f);
@@ -102,7 +96,6 @@ namespace DeferredReality.API
         {
             var result = new RealityEnvironmentSummary
             {
-                schemaVersion = schemaVersion,
                 biomeDefName = biomeDefName,
                 climateClass = climateClass,
                 minimumTemperature = minimumTemperature,
@@ -126,20 +119,20 @@ namespace DeferredReality.API
         }
     }
 
-    /// <summary>Persisted descriptor for a region independent of any active Map.</summary>
+    /// <summary>Persisted descriptor for durable latent state and its optional live projection binding.</summary>
     public sealed class RealityRegionDescriptor : IExposable
     {
-        public int schemaVersion = 1;
         public string regionId;
         public string label;
         public RealityFidelity fidelity = RealityFidelity.Dormant;
         public RealityObservationPrecision observationLevel = RealityObservationPrecision.Rumor;
-        public RealityLifecycleState lifecycle = RealityLifecycleState.Active;
+        public RealityRegionAuthority authority = RealityRegionAuthority.Latent;
         public int stableSeed;
         public long createdTick;
         public long lastUpdateTick;
-        public long lastMaterializedTick = -1;
-        public int activeMapUniqueId = -1;
+        public long lastProjectionTick = -1;
+        /// <summary>Runtime/persisted binding to the current Map projection. It is never region identity.</summary>
+        public int projectionMapUniqueId = -1;
         public int lastKnownWorldTile = -1;
         public RealityEnvironmentSummary environment = new RealityEnvironmentSummary();
         public List<RealityProviderPayload> providerPayloads = new List<RealityProviderPayload>();
@@ -147,17 +140,16 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref regionId, "regionId");
             Scribe_Values.Look(ref label, "label");
             Scribe_Values.Look(ref fidelity, "fidelity", RealityFidelity.Dormant);
             Scribe_Values.Look(ref observationLevel, "observationLevel", RealityObservationPrecision.Rumor);
-            Scribe_Values.Look(ref lifecycle, "lifecycle", RealityLifecycleState.Active);
+            Scribe_Values.Look(ref authority, "authority", RealityRegionAuthority.Latent);
             Scribe_Values.Look(ref stableSeed, "stableSeed");
             Scribe_Values.Look(ref createdTick, "createdTick");
             Scribe_Values.Look(ref lastUpdateTick, "lastUpdateTick");
-            Scribe_Values.Look(ref lastMaterializedTick, "lastMaterializedTick", -1L);
-            Scribe_Values.Look(ref activeMapUniqueId, "activeMapUniqueId", -1);
+            Scribe_Values.Look(ref lastProjectionTick, "lastProjectionTick", -1L);
+            Scribe_Values.Look(ref projectionMapUniqueId, "projectionMapUniqueId", -1);
             Scribe_Values.Look(ref lastKnownWorldTile, "lastKnownWorldTile", -1);
             Scribe_Deep.Look(ref environment, "environment");
             Scribe_Collections.Look(ref providerPayloads, "providerPayloads", LookMode.Deep);
@@ -172,17 +164,16 @@ namespace DeferredReality.API
         {
             var result = new RealityRegionDescriptor
             {
-                schemaVersion = schemaVersion,
                 regionId = regionId,
                 label = label,
                 fidelity = fidelity,
                 observationLevel = observationLevel,
-                lifecycle = lifecycle,
+                authority = authority,
                 stableSeed = stableSeed,
                 createdTick = createdTick,
                 lastUpdateTick = lastUpdateTick,
-                lastMaterializedTick = lastMaterializedTick,
-                activeMapUniqueId = activeMapUniqueId,
+                lastProjectionTick = lastProjectionTick,
+                projectionMapUniqueId = projectionMapUniqueId,
                 lastKnownWorldTile = lastKnownWorldTile,
                 environment = environment?.Clone() ?? new RealityEnvironmentSummary()
             };
@@ -192,49 +183,141 @@ namespace DeferredReality.API
         }
     }
 
-    /// <summary>Stable link between two regions. Links do not require both endpoints to be materialized.</summary>
-    public sealed class RealityTopologyLink : IExposable
+    /// <summary>
+    /// Persisted provider-neutral topology between two durable regions. A connection describes eligibility and
+    /// metadata only; it does not perform a transfer, materialization, or state mutation across the edge.
+    /// </summary>
+    public sealed class RealityRegionConnection : IExposable
     {
-        public int schemaVersion = 1;
-        public string linkId;
-        public string fromRegionId;
-        public string toRegionId;
+        public string connectionId;
+        public string sourceRegionId;
+        public string destinationRegionId;
+        public RealityRegionConnectionDirection direction = RealityRegionConnectionDirection.Directed;
         public string kind;
-        public bool oneWay;
-        public bool conditional;
-        public float travelCost = 1f;
-        public string migrationFilter;
+        /// <summary>Provider-defined stable discriminator when several connections share the same semantic kind.</summary>
+        public string identityKey;
+        public float traversalCost = -1f;
+        public float abstractDistance = -1f;
+        public string sourceExitEdge;
+        public string destinationEntryEdge;
+        public string reverseSourceExitEdge;
+        public string reverseDestinationEntryEdge;
+        /// <summary>Provider namespace/owner. Missing providers do not make this opaque record disposable.</summary>
+        public string ownerNamespace;
+        /// <summary>Opaque provider-defined connection semantics; the framework never parses this value.</summary>
+        public string providerPayload;
+        public RealityRegionConnectionLifecycle lifecycle = RealityRegionConnectionLifecycle.Enabled;
         public List<RealityPayloadField> metadata = new List<RealityPayloadField>();
+
+        /// <summary>Whether the connection can be traversed in either direction.</summary>
+        public bool IsBidirectional => direction == RealityRegionConnectionDirection.Bidirectional;
+
+        /// <summary>Whether normal graph queries should return this connection.</summary>
+        public bool IsEnabled => lifecycle == RealityRegionConnectionLifecycle.Enabled;
+
+        /// <summary>Builds the canonical deterministic ID for a connection identity.</summary>
+        public static string StableId(RealityRegionId sourceRegionId, RealityRegionId destinationRegionId,
+            RealityRegionConnectionDirection direction, string kind, string ownerNamespace = null, string identityKey = null)
+        {
+            return StableId(sourceRegionId.ToString(), destinationRegionId.ToString(), direction, kind, ownerNamespace, identityKey);
+        }
+
+        /// <summary>Builds a canonical ID from already serialized region identities.</summary>
+        public static string StableId(string sourceRegionId, string destinationRegionId,
+            RealityRegionConnectionDirection direction, string kind, string ownerNamespace = null, string identityKey = null)
+        {
+            string left = sourceRegionId ?? string.Empty;
+            string right = destinationRegionId ?? string.Empty;
+            if (direction == RealityRegionConnectionDirection.Bidirectional &&
+                string.CompareOrdinal(left, right) > 0)
+            {
+                string swap = left;
+                left = right;
+                right = swap;
+            }
+            return "connection:" + RealityDeterminism.Combine(left, right, direction.ToString(), kind ?? string.Empty,
+                ownerNamespace ?? string.Empty, identityKey ?? string.Empty).ToString(CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>Whether the persisted ID matches the canonical identity fields.</summary>
+        public bool HasStableIdentity => string.Equals(connectionId,
+            StableId(sourceRegionId, destinationRegionId, direction, kind, ownerNamespace, identityKey),
+            StringComparison.Ordinal);
+
+        /// <summary>Returns true when this connection can be traversed from the supplied region.</summary>
+        public bool IsOutgoingFrom(string regionId)
+        {
+            return IsEnabled && (string.Equals(sourceRegionId, regionId, StringComparison.Ordinal) ||
+                IsBidirectional && string.Equals(destinationRegionId, regionId, StringComparison.Ordinal));
+        }
+
+        /// <summary>Returns true when this connection can be entered at the supplied region.</summary>
+        public bool IsIncomingTo(string regionId)
+        {
+            return IsEnabled && (string.Equals(destinationRegionId, regionId, StringComparison.Ordinal) ||
+                IsBidirectional && string.Equals(sourceRegionId, regionId, StringComparison.Ordinal));
+        }
+
+        /// <summary>Gets the traversal destination when leaving a supplied endpoint.</summary>
+        public bool TryGetDestinationRegionId(string fromRegionId, out string destination)
+        {
+            destination = null;
+            if (!IsOutgoingFrom(fromRegionId)) return false;
+            if (string.Equals(sourceRegionId, fromRegionId, StringComparison.Ordinal)) destination = destinationRegionId;
+            else destination = sourceRegionId;
+            return !string.IsNullOrEmpty(destination);
+        }
+
+        /// <summary>Gets the opposite endpoint regardless of direction, for neighborhood inspection.</summary>
+        public bool TryGetOtherRegionId(string regionId, out string other)
+        {
+            other = null;
+            if (string.Equals(sourceRegionId, regionId, StringComparison.Ordinal)) other = destinationRegionId;
+            else if (string.Equals(destinationRegionId, regionId, StringComparison.Ordinal)) other = sourceRegionId;
+            return !string.IsNullOrEmpty(other);
+        }
 
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
-            Scribe_Values.Look(ref linkId, "linkId");
-            Scribe_Values.Look(ref fromRegionId, "fromRegionId");
-            Scribe_Values.Look(ref toRegionId, "toRegionId");
+            Scribe_Values.Look(ref connectionId, "connectionId");
+            Scribe_Values.Look(ref sourceRegionId, "sourceRegionId");
+            Scribe_Values.Look(ref destinationRegionId, "destinationRegionId");
+            Scribe_Values.Look(ref direction, "direction", RealityRegionConnectionDirection.Directed);
             Scribe_Values.Look(ref kind, "kind");
-            Scribe_Values.Look(ref oneWay, "oneWay");
-            Scribe_Values.Look(ref conditional, "conditional");
-            Scribe_Values.Look(ref travelCost, "travelCost", 1f);
-            Scribe_Values.Look(ref migrationFilter, "migrationFilter");
+            Scribe_Values.Look(ref identityKey, "identityKey");
+            Scribe_Values.Look(ref traversalCost, "traversalCost", -1f);
+            Scribe_Values.Look(ref abstractDistance, "abstractDistance", -1f);
+            Scribe_Values.Look(ref sourceExitEdge, "sourceExitEdge");
+            Scribe_Values.Look(ref destinationEntryEdge, "destinationEntryEdge");
+            Scribe_Values.Look(ref reverseSourceExitEdge, "reverseSourceExitEdge");
+            Scribe_Values.Look(ref reverseDestinationEntryEdge, "reverseDestinationEntryEdge");
+            Scribe_Values.Look(ref ownerNamespace, "ownerNamespace");
+            Scribe_Values.Look(ref providerPayload, "providerPayload");
+            Scribe_Values.Look(ref lifecycle, "lifecycle", RealityRegionConnectionLifecycle.Enabled);
             Scribe_Collections.Look(ref metadata, "metadata", LookMode.Deep);
             if (Scribe.mode == LoadSaveMode.PostLoadInit) metadata = metadata ?? new List<RealityPayloadField>();
         }
 
-        internal RealityTopologyLink Clone()
+        internal RealityRegionConnection Clone()
         {
-            return new RealityTopologyLink
+            return new RealityRegionConnection
             {
-                schemaVersion = schemaVersion,
-                linkId = linkId,
-                fromRegionId = fromRegionId,
-                toRegionId = toRegionId,
+                connectionId = connectionId,
+                sourceRegionId = sourceRegionId,
+                destinationRegionId = destinationRegionId,
+                direction = direction,
                 kind = kind,
-                oneWay = oneWay,
-                conditional = conditional,
-                travelCost = travelCost,
-                migrationFilter = migrationFilter,
+                identityKey = identityKey,
+                traversalCost = traversalCost,
+                abstractDistance = abstractDistance,
+                sourceExitEdge = sourceExitEdge,
+                destinationEntryEdge = destinationEntryEdge,
+                reverseSourceExitEdge = reverseSourceExitEdge,
+                reverseDestinationEntryEdge = reverseDestinationEntryEdge,
+                ownerNamespace = ownerNamespace,
+                providerPayload = providerPayload,
+                lifecycle = lifecycle,
                 metadata = (metadata ?? new List<RealityPayloadField>()).Where(item => item != null).Select(item => item.Clone()).ToList()
             };
         }
@@ -243,7 +326,8 @@ namespace DeferredReality.API
     /// <summary>Generic aggregate population record.</summary>
     public sealed class RealityPopulationRecord : IExposable
     {
-        public int schemaVersion = 1;
+        /// <summary>Population is fungible quantity; individual members belong in anchors.</summary>
+        public RealityCompressionSignificance compressionSignificance = RealityCompressionSignificance.Aggregate;
         public string populationId;
         public string providerId;
         public string kind;
@@ -264,7 +348,7 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            Scribe_Values.Look(ref compressionSignificance, "compressionSignificance", RealityCompressionSignificance.Aggregate);
             Scribe_Values.Look(ref populationId, "populationId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref kind, "kind");
@@ -311,13 +395,16 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref precision, "precision", RealityObservationPrecision.Region);
         }
 
-        internal RealityLocation Clone() => new RealityLocation { x = x, z = z, edge = edge, areaId = areaId, precision = precision };
+        public RealityLocation Clone() => new RealityLocation { x = x, z = z, edge = edge, areaId = areaId, precision = precision };
     }
 
     /// <summary>Identity-bearing object that must not be replaced by anonymous population detail.</summary>
     public sealed class RealityAnchorRecord : IExposable
     {
-        public int schemaVersion = 1;
+        /// <summary>Anchors retain identity across abstraction and projection changes.</summary>
+        public RealityCompressionSignificance compressionSignificance = RealityCompressionSignificance.Identity;
+        /// <summary>Non-empty load IDs require an explicit provider resolution before compression.</summary>
+        public RealityExternalReferenceState externalReferenceState = RealityExternalReferenceState.None;
         public string anchorId;
         public string providerId;
         public string typeId;
@@ -334,7 +421,8 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            Scribe_Values.Look(ref compressionSignificance, "compressionSignificance", RealityCompressionSignificance.Identity);
+            Scribe_Values.Look(ref externalReferenceState, "externalReferenceState", RealityExternalReferenceState.None);
             Scribe_Values.Look(ref anchorId, "anchorId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref typeId, "typeId");
@@ -361,7 +449,8 @@ namespace DeferredReality.API
     /// <summary>Deferred fact that future resolution or materialization must honor.</summary>
     public sealed class RealityConstraint : IExposable
     {
-        public int schemaVersion = 1;
+        /// <summary>Constraints are established facts unless a provider explicitly vetoes their use.</summary>
+        public RealityCompressionSignificance compressionSignificance = RealityCompressionSignificance.EstablishedFact;
         public string constraintId;
         public string providerId;
         public string typeId;
@@ -388,7 +477,7 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            Scribe_Values.Look(ref compressionSignificance, "compressionSignificance", RealityCompressionSignificance.EstablishedFact);
             Scribe_Values.Look(ref constraintId, "constraintId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref typeId, "typeId");
@@ -439,7 +528,6 @@ namespace DeferredReality.API
     /// <summary>Persisted scheduled process. Providers receive elapsed time analytically.</summary>
     public sealed class RealityProcessRecord : IExposable
     {
-        public int schemaVersion = 1;
         public string processId;
         public string providerId;
         public RealityProcessKind kind = RealityProcessKind.ProviderDefined;
@@ -451,17 +539,18 @@ namespace DeferredReality.API
         public int executionCount;
         public bool cancelled;
         public bool paused;
-        /// <summary>Persisted pause cause; old saves default to None and are repaired deterministically.</summary>
+        /// <summary>Persisted pause cause; an unspecified cause is normalized deterministically.</summary>
         public RealityProcessPauseReason pauseReason = RealityProcessPauseReason.None;
         /// <summary>Tick at which cancellation became terminal, or -1 when unknown.</summary>
         public long cancelledTick = -1;
+        /// <summary>Durable link to the escalation that currently owns this process's pause.</summary>
+        public string pendingEscalationRequestId;
         public string lastError;
         public string payload;
 
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref processId, "processId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref kind, "kind", RealityProcessKind.ProviderDefined);
@@ -475,6 +564,7 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref paused, "paused");
             Scribe_Values.Look(ref pauseReason, "pauseReason", RealityProcessPauseReason.None);
             Scribe_Values.Look(ref cancelledTick, "cancelledTick", -1L);
+            Scribe_Values.Look(ref pendingEscalationRequestId, "pendingEscalationRequestId");
             Scribe_Values.Look(ref lastError, "lastError");
             Scribe_Values.Look(ref payload, "payload");
         }
@@ -482,10 +572,53 @@ namespace DeferredReality.API
         internal RealityProcessRecord Clone() => (RealityProcessRecord)MemberwiseClone();
     }
 
+    /// <summary>Durable, typed request for a process to run at a higher fidelity.</summary>
+    public sealed class RealityFidelityEscalationRecord : IExposable
+    {
+        public string requestId;
+        public string processId;
+        public string providerId;
+        public string regionId;
+        public RealityFidelity currentFidelity = RealityFidelity.Dormant;
+        public RealityFidelity requestedFidelity = RealityFidelity.Statistical;
+        public RealityFidelityEscalationReason reason = RealityFidelityEscalationReason.InsufficientResolution;
+        public RealityFidelityEscalationPolicy policy = RealityFidelityEscalationPolicy.HostApproval;
+        public RealityFidelityEscalationStatus status = RealityFidelityEscalationStatus.Pending;
+        public string subjectId;
+        public long createdTick;
+        public long updatedTick;
+        public long resolvedTick = -1;
+        public int attemptCount;
+        public string diagnostic;
+
+        /// <inheritdoc />
+        public void ExposeData()
+        {
+            Scribe_Values.Look(ref requestId, "requestId");
+            Scribe_Values.Look(ref processId, "processId");
+            Scribe_Values.Look(ref providerId, "providerId");
+            Scribe_Values.Look(ref regionId, "regionId");
+            Scribe_Values.Look(ref currentFidelity, "currentFidelity", RealityFidelity.Dormant);
+            Scribe_Values.Look(ref requestedFidelity, "requestedFidelity", RealityFidelity.Statistical);
+            Scribe_Values.Look(ref reason, "reason", RealityFidelityEscalationReason.InsufficientResolution);
+            Scribe_Values.Look(ref policy, "policy", RealityFidelityEscalationPolicy.HostApproval);
+            Scribe_Values.Look(ref status, "status", RealityFidelityEscalationStatus.Pending);
+            Scribe_Values.Look(ref subjectId, "subjectId");
+            Scribe_Values.Look(ref createdTick, "createdTick");
+            Scribe_Values.Look(ref updatedTick, "updatedTick");
+            Scribe_Values.Look(ref resolvedTick, "resolvedTick", -1L);
+            Scribe_Values.Look(ref attemptCount, "attemptCount");
+            Scribe_Values.Look(ref diagnostic, "diagnostic");
+        }
+
+        internal RealityFidelityEscalationRecord Clone() => (RealityFidelityEscalationRecord)MemberwiseClone();
+    }
+
     /// <summary>Observation record. It never mutates the objective population value.</summary>
     public sealed class RealityObservationRecord : IExposable
     {
-        public int schemaVersion = 1;
+        /// <summary>Established observations constrain rematerialization; disposable observations may age out.</summary>
+        public RealityCompressionSignificance compressionSignificance = RealityCompressionSignificance.EstablishedFact;
         public string observationId;
         public string observerId;
         public string source;
@@ -495,17 +628,22 @@ namespace DeferredReality.API
         public float certainty;
         public float confidence;
         public RealityObservationPrecision spatialPrecision = RealityObservationPrecision.Region;
+        /// <summary>Structured knowledge location; it is not objective state and may be absent at coarse precision.</summary>
+        public RealityLocation location = new RealityLocation();
         public string facet;
         public bool playerObserved;
         public bool sensorDerived;
         public bool inferred;
         public bool rumored;
         public string estimate;
+        public RealityObservationLifecycle lifecycle = RealityObservationLifecycle.Active;
+        public string supersededByObservationId;
+        public string invalidationReason;
 
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            Scribe_Values.Look(ref compressionSignificance, "compressionSignificance", RealityCompressionSignificance.EstablishedFact);
             Scribe_Values.Look(ref observationId, "observationId");
             Scribe_Values.Look(ref observerId, "observerId");
             Scribe_Values.Look(ref source, "source");
@@ -515,59 +653,25 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref certainty, "certainty");
             Scribe_Values.Look(ref confidence, "confidence");
             Scribe_Values.Look(ref spatialPrecision, "spatialPrecision", RealityObservationPrecision.Region);
+            Scribe_Deep.Look(ref location, "location");
             Scribe_Values.Look(ref facet, "facet");
             Scribe_Values.Look(ref playerObserved, "playerObserved");
             Scribe_Values.Look(ref sensorDerived, "sensorDerived");
             Scribe_Values.Look(ref inferred, "inferred");
             Scribe_Values.Look(ref rumored, "rumored");
             Scribe_Values.Look(ref estimate, "estimate");
+            Scribe_Values.Look(ref lifecycle, "lifecycle", RealityObservationLifecycle.Active);
+            Scribe_Values.Look(ref supersededByObservationId, "supersededByObservationId");
+            Scribe_Values.Look(ref invalidationReason, "invalidationReason");
+            if (Scribe.mode == LoadSaveMode.PostLoadInit) location = location ?? new RealityLocation();
         }
 
-        internal RealityObservationRecord Clone() => (RealityObservationRecord)MemberwiseClone();
-    }
-
-    /// <summary>Legacy map alias retained so a map ID can be migrated without making it a region identity.</summary>
-    public sealed class RealityMapAlias : IExposable
-    {
-        public int legacyMapId = -1;
-        public string regionId;
-        public long migratedTick;
-        public int schemaVersion = 1;
-
-        /// <inheritdoc />
-        public void ExposeData()
+        internal RealityObservationRecord Clone()
         {
-            Scribe_Values.Look(ref legacyMapId, "legacyMapId", -1);
-            Scribe_Values.Look(ref regionId, "regionId");
-            Scribe_Values.Look(ref migratedTick, "migratedTick");
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
+            var result = (RealityObservationRecord)MemberwiseClone();
+            result.location = location?.Clone() ?? new RealityLocation();
+            return result;
         }
-
-        internal RealityMapAlias Clone() => (RealityMapAlias)MemberwiseClone();
-    }
-
-    /// <summary>Idempotent provider migration marker.</summary>
-    public sealed class RealityMigrationMarker : IExposable
-    {
-        public string providerId;
-        public string consumerId;
-        public int version;
-        public long committedTick;
-        public string checksum;
-        public int schemaVersion = 1;
-
-        /// <inheritdoc />
-        public void ExposeData()
-        {
-            Scribe_Values.Look(ref providerId, "providerId");
-            Scribe_Values.Look(ref consumerId, "consumerId");
-            Scribe_Values.Look(ref version, "version");
-            Scribe_Values.Look(ref committedTick, "committedTick");
-            Scribe_Values.Look(ref checksum, "checksum");
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
-        }
-
-        internal RealityMigrationMarker Clone() => (RealityMigrationMarker)MemberwiseClone();
     }
 
     /// <summary>Exactly-once mutation marker for catches, kills, releases, and other provider events.</summary>
@@ -577,11 +681,10 @@ namespace DeferredReality.API
         public string providerId;
         /// <summary>Optional provider-defined replay domain; null keeps the marker durable.</summary>
         public string domainId;
-        /// <summary>Provider/domain sequence. Negative means legacy operation-ID-only durability.</summary>
+        /// <summary>Provider/domain sequence. Negative means operation-ID-only durability.</summary>
         public long sequence = -1;
         public long tick;
         public string kind;
-        public int schemaVersion = 2;
 
         /// <inheritdoc />
         public void ExposeData()
@@ -592,7 +695,6 @@ namespace DeferredReality.API
             Scribe_Values.Look(ref sequence, "sequence", -1);
             Scribe_Values.Look(ref tick, "tick");
             Scribe_Values.Look(ref kind, "kind");
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
         }
 
         internal RealityAppliedOperation Clone() => (RealityAppliedOperation)MemberwiseClone();
@@ -601,7 +703,6 @@ namespace DeferredReality.API
     /// <summary>Provider proof that exactly-once markers in one domain cannot legitimately replay before this tick.</summary>
     public sealed class RealityOperationRetentionWatermark : IExposable
     {
-        public int schemaVersion = 2;
         public string providerId;
         public string kind;
         public string domainId;
@@ -617,7 +718,6 @@ namespace DeferredReality.API
 
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref kind, "kind");
             Scribe_Values.Look(ref domainId, "domainId");
@@ -635,7 +735,6 @@ namespace DeferredReality.API
     /// <summary>Explicit conflict report retained for diagnostics and future resolution.</summary>
     public sealed class RealityConflictReport : IExposable
     {
-        public int schemaVersion = 1;
         public string conflictId;
         public string regionId;
         public string subjectId;
@@ -647,7 +746,6 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref conflictId, "conflictId");
             Scribe_Values.Look(ref regionId, "regionId");
             Scribe_Values.Look(ref subjectId, "subjectId");
@@ -669,7 +767,6 @@ namespace DeferredReality.API
     /// <summary>Corrupted or unsupported data kept for inspection instead of being deleted.</summary>
     public sealed class RealityQuarantineRecord : IExposable
     {
-        public int schemaVersion = 1;
         public string recordType;
         public string recordId;
         public string providerId;
@@ -680,7 +777,6 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref recordType, "recordType");
             Scribe_Values.Look(ref recordId, "recordId");
             Scribe_Values.Look(ref providerId, "providerId");
@@ -695,7 +791,6 @@ namespace DeferredReality.API
     /// <summary>Save-safe role marker for a temporary provider-owned adjacent map.</summary>
     public sealed class RealityAdjacentMapRecord : IExposable
     {
-        public int schemaVersion = 1;
         public int mapUniqueId = -1;
         public string transactionId;
         public string providerId;
@@ -710,7 +805,6 @@ namespace DeferredReality.API
 
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref mapUniqueId, "mapUniqueId", -1);
             Scribe_Values.Look(ref transactionId, "transactionId");
             Scribe_Values.Look(ref providerId, "providerId");
@@ -730,7 +824,6 @@ namespace DeferredReality.API
     /// <summary>Save-safe authorization for one materialization transaction to classify one newly created map.</summary>
     public sealed class RealityMapCreationIntentRecord : IExposable
     {
-        public int schemaVersion = 1;
         public string transactionId;
         public string providerId;
         public string regionId;
@@ -744,7 +837,6 @@ namespace DeferredReality.API
 
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref transactionId, "transactionId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref regionId, "regionId");
@@ -763,7 +855,6 @@ namespace DeferredReality.API
     /// <summary>Durable ownership and return lease for one pawn excursion.</summary>
     public sealed class RealityExcursionTicket : IExposable
     {
-        public int schemaVersion = 1;
         public string excursionId;
         public string providerId;
         public string pawnLoadId;
@@ -787,7 +878,6 @@ namespace DeferredReality.API
 
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref excursionId, "excursionId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref pawnLoadId, "pawnLoadId");
@@ -816,7 +906,6 @@ namespace DeferredReality.API
     /// <summary>Bounded diagnostic history for adjacent monitoring and eviction decisions.</summary>
     public sealed class RealityAdjacentDiagnosticRecord : IExposable
     {
-        public int schemaVersion = 1;
         public string diagnosticId;
         public string kind;
         public string providerId;
@@ -827,7 +916,6 @@ namespace DeferredReality.API
 
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref diagnosticId, "diagnosticId");
             Scribe_Values.Look(ref kind, "kind");
             Scribe_Values.Look(ref providerId, "providerId");
@@ -843,7 +931,6 @@ namespace DeferredReality.API
     /// <summary>Save-safe journal for an interrupted adjacent-region transfer.</summary>
     public sealed class RealityTransferJournalRecord : IExposable
     {
-        public int schemaVersion = 1;
         public string transferId;
         public string providerId;
         public string excursionId;
@@ -864,7 +951,6 @@ namespace DeferredReality.API
         /// <inheritdoc />
         public void ExposeData()
         {
-            Scribe_Values.Look(ref schemaVersion, "schemaVersion", 1);
             Scribe_Values.Look(ref transferId, "transferId");
             Scribe_Values.Look(ref providerId, "providerId");
             Scribe_Values.Look(ref excursionId, "excursionId");

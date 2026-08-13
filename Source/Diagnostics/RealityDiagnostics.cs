@@ -19,6 +19,11 @@ namespace DeferredReality.Diagnostics
         public readonly int revision;
         public readonly long tick;
         public readonly int regions;
+        public readonly int connections;
+        public readonly int enabledConnections;
+        public readonly int disabledConnections;
+        public readonly int quarantinedConnections;
+        public readonly int orphanConnections;
         public readonly int populations;
         public readonly int anchors;
         public readonly int constraints;
@@ -33,6 +38,9 @@ namespace DeferredReality.Diagnostics
         public readonly int historicalExcursions;
         public readonly int mapCreationIntents;
         public readonly int operationWatermarks;
+        public readonly int pendingFidelityEscalations;
+        public readonly int approvedFidelityEscalations;
+        public readonly int failedFidelityEscalations;
         public readonly bool storageMaintenanceDirty;
         public readonly long nextStorageMaintenanceTick;
         public readonly int compactedExcursions;
@@ -53,6 +61,16 @@ namespace DeferredReality.Diagnostics
             tick = world?.Now ?? 0;
             regionRows = world?.RegionSnapshots() ?? Array.Empty<RealityRegionSnapshot>();
             regions = regionRows.Count;
+            IReadOnlyList<RealityRegionConnection> connectionRows = world?.ConnectionSnapshots() ?? Array.Empty<RealityRegionConnection>();
+            connections = connectionRows.Count;
+            enabledConnections = connectionRows.Count(item => item != null && item.IsEnabled);
+            disabledConnections = connectionRows.Count(item => item != null &&
+                item.lifecycle == RealityRegionConnectionLifecycle.Disabled);
+            quarantinedConnections = connectionRows.Count(item => item != null &&
+                item.lifecycle == RealityRegionConnectionLifecycle.Quarantined);
+            HashSet<string> regionIds = new HashSet<string>(regionRows.Select(item => item.id.ToString()), StringComparer.Ordinal);
+            orphanConnections = connectionRows.Count(item => item != null &&
+                (!regionIds.Contains(item.sourceRegionId) || !regionIds.Contains(item.destinationRegionId)));
             populations = world?.PopulationSnapshots().Count ?? 0;
             anchors = world?.AnchorSnapshots().Count ?? 0;
             constraints = world?.ConstraintSnapshots().Count ?? 0;
@@ -62,7 +80,7 @@ namespace DeferredReality.Diagnostics
             conflicts = world?.ConflictSnapshots().Count ?? 0;
             quarantine = world?.QuarantineSnapshots().Count ?? 0;
             providers = RealityProviderRegistry.Registrations().Count;
-            adjacentLines = world == null ? Array.Empty<string>() : RealityAdjacentSurfaceService.AdjacentDiagnostics(world);
+            adjacentLines = world == null ? Array.Empty<string>() : RealityProjectionDiagnostics.Lines(world);
             adjacentMaps = world?.AdjacentMapSnapshots().Count ?? 0;
             IReadOnlyList<RealityExcursionTicket> excursionRows = world?.ExcursionSnapshots() ?? Array.Empty<RealityExcursionTicket>();
             excursions = excursionRows.Count;
@@ -71,6 +89,14 @@ namespace DeferredReality.Diagnostics
             historicalExcursions = excursions - activeExcursions;
             mapCreationIntents = world?.MapCreationIntentSnapshots().Count ?? 0;
             operationWatermarks = world?.OperationWatermarkSnapshots().Count ?? 0;
+            IReadOnlyList<RealityFidelityEscalationRecord> escalationRows =
+                world?.FidelityEscalationSnapshots() ?? Array.Empty<RealityFidelityEscalationRecord>();
+            pendingFidelityEscalations = escalationRows.Count(item => item != null &&
+                item.status == RealityFidelityEscalationStatus.Pending);
+            approvedFidelityEscalations = escalationRows.Count(item => item != null &&
+                item.status == RealityFidelityEscalationStatus.Approved);
+            failedFidelityEscalations = escalationRows.Count(item => item != null &&
+                item.status == RealityFidelityEscalationStatus.Failed);
             storageMaintenanceDirty = world?.StorageMaintenanceDirty == true;
             nextStorageMaintenanceTick = world?.NextStorageMaintenanceTick ?? 0;
             RealityCompactionReport compaction = world?.LastCompactionReport ?? new RealityCompactionReport();
@@ -124,7 +150,12 @@ namespace DeferredReality.Diagnostics
             var builder = new StringBuilder();
             RealityDiagnosticsSnapshot summary = Snapshot(world);
             builder.Append("revision=").Append(summary.revision).Append(" tick=").Append(summary.tick)
-                .Append(" regions=").Append(summary.regions).Append(" populations=").Append(summary.populations)
+                .Append(" regions=").Append(summary.regions).Append(" connections=").Append(summary.connections)
+                .Append(" enabledConnections=").Append(summary.enabledConnections)
+                .Append(" disabledConnections=").Append(summary.disabledConnections)
+                .Append(" quarantinedConnections=").Append(summary.quarantinedConnections)
+                .Append(" orphanConnections=").Append(summary.orphanConnections)
+                .Append(" populations=").Append(summary.populations)
                 .Append(" anchors=").Append(summary.anchors).Append(" constraints=").Append(summary.constraints)
                 .Append(" processes=").Append(summary.processes).Append(" observations=").Append(summary.observations)
                 .Append(" conflicts=").Append(summary.conflicts).Append(" quarantine=").Append(summary.quarantine)
@@ -133,6 +164,9 @@ namespace DeferredReality.Diagnostics
                 .Append(" historicalExcursions=").Append(summary.historicalExcursions)
                 .Append(" mapCreationIntents=").Append(summary.mapCreationIntents)
                 .Append(" operationWatermarks=").Append(summary.operationWatermarks)
+                .Append(" fidelityEscalations=pending:").Append(summary.pendingFidelityEscalations)
+                .Append(",approved:").Append(summary.approvedFidelityEscalations)
+                .Append(",failed:").Append(summary.failedFidelityEscalations)
                 .Append(" maintenanceDirty=").Append(summary.storageMaintenanceDirty)
                 .Append(" nextMaintenance=").Append(summary.nextStorageMaintenanceTick).AppendLine();
             builder.Append("compaction|excursions=").Append(summary.compactedExcursions)
@@ -142,6 +176,12 @@ namespace DeferredReality.Diagnostics
                 builder.Append("rollback-failure|").Append(rollbackFailure).AppendLine();
             foreach (RealityRegionSnapshot region in summary.regionRows)
                 builder.Append(region.id).Append('|').Append(region.fidelity).Append('|').Append(region.observationLevel).AppendLine();
+            foreach (RealityRegionConnection connection in world.ConnectionSnapshots())
+                builder.Append("connection|").Append(connection.connectionId).Append('|')
+                    .Append(connection.sourceRegionId).Append("->").Append(connection.destinationRegionId).Append('|')
+                    .Append(connection.direction).Append('|').Append(connection.kind).Append('|')
+                    .Append(connection.lifecycle).Append('|').Append(connection.traversalCost.ToString("R", CultureInfo.InvariantCulture))
+                    .AppendLine();
             foreach (RealityPopulationSnapshot population in world.PopulationSnapshots())
                 builder.Append("population|").Append(population.record.populationId).Append('|')
                     .Append(population.record.amount.ToString("R", CultureInfo.InvariantCulture))
@@ -153,6 +193,12 @@ namespace DeferredReality.Diagnostics
                     .Append('|').Append(process.record.nextDueTick).Append('|').Append(process.record.executionCount)
                     .Append('|').Append(process.record.lastError ?? string.Empty).AppendLine();
             }
+            foreach (RealityFidelityEscalationRecord escalation in world.FidelityEscalationSnapshots())
+                builder.Append("fidelity-escalation|").Append(escalation.requestId).Append('|')
+                    .Append(escalation.regionId).Append('|').Append(escalation.currentFidelity)
+                    .Append("->").Append(escalation.requestedFidelity).Append('|').Append(escalation.reason)
+                    .Append('|').Append(escalation.status).Append('|').Append(escalation.diagnostic ?? string.Empty)
+                    .AppendLine();
             foreach (string line in summary.adjacentLines) builder.Append(line).AppendLine();
             foreach (RealityOperationRetentionWatermark watermark in world.OperationWatermarkSnapshots())
                 builder.Append("operation-watermark|").Append(watermark.providerId).Append('|').Append(watermark.kind)
@@ -180,9 +226,17 @@ namespace DeferredReality.Diagnostics
             var report = new RealityAuditReport();
             if (world == null) { report.errors.Add("No world component."); return report; }
             HashSet<string> regionIds = new HashSet<string>(world.RegionSnapshots().Select(item => item.id.ToString()), StringComparer.Ordinal);
-            foreach (RealityTopologyLink link in world.TopologySnapshots())
+            foreach (RealityRegionConnection connection in world.ConnectionSnapshots())
             {
-                if (!regionIds.Contains(link.fromRegionId) || !regionIds.Contains(link.toRegionId)) report.errors.Add("orphan-topology=" + link.linkId);
+                if (!regionIds.Contains(connection.sourceRegionId) || !regionIds.Contains(connection.destinationRegionId))
+                    report.errors.Add("orphan-connection=" + connection.connectionId);
+                if (!string.IsNullOrEmpty(connection.ownerNamespace) && connection.ownerNamespace != "core" &&
+                    !RealityProviderRegistry.TryGet(connection.ownerNamespace, out _))
+                    report.warnings.Add("missing-connection-provider=" + connection.ownerNamespace + "/" + connection.connectionId);
+                if (connection.lifecycle == RealityRegionConnectionLifecycle.Disabled)
+                    report.warnings.Add("disabled-connection=" + connection.connectionId);
+                else if (connection.lifecycle == RealityRegionConnectionLifecycle.Quarantined)
+                    report.warnings.Add("quarantined-connection=" + connection.connectionId);
             }
             foreach (RealityPopulationSnapshot population in world.PopulationSnapshots())
             {
@@ -225,7 +279,7 @@ namespace DeferredReality.Diagnostics
         }
     }
 
-    /// <summary>Compact inspector for region, fidelity, topology, records, and audit state.</summary>
+    /// <summary>Compact inspector for region, fidelity, graph, records, and audit state.</summary>
     public sealed class Window_DeferredRealityInspector : Window
     {
         public override Vector2 InitialSize => new Vector2(Mathf.Min(1100f, UI.screenWidth * 0.92f), Mathf.Min(720f, UI.screenHeight * 0.88f));
@@ -246,17 +300,22 @@ namespace DeferredReality.Diagnostics
             Widgets.BeginScrollView(new Rect(rect.x, rect.y + 30f, rect.width, rect.height - 30f), ref scrollPosition, view);
             float y = 0f;
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Revision " + summary.revision + " | Tick " + summary.tick +
-                " | Regions " + summary.regions + " | Populations " + summary.populations + " | Anchors " + summary.anchors); y += 24f;
+                " | Regions " + summary.regions + " | Connections " + summary.connections + " (enabled " +
+                summary.enabledConnections + ", disabled " + summary.disabledConnections + ", quarantined " +
+                summary.quarantinedConnections + ") | Populations " + summary.populations +
+                " | Anchors " + summary.anchors); y += 24f;
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Constraints " + summary.constraints + " | Processes " + summary.processes +
                 " | Observations " + summary.observations + " | Conflicts " + summary.conflicts + " | Quarantine " + summary.quarantine); y += 30f;
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Providers " + summary.providers + " | Process runs " + summary.totalProcessExecutions +
                 " | Failures " + summary.totalProcessFailures + " | Bounded catch-ups " + summary.boundedCatchups); y += 30f;
             Widgets.Label(new Rect(0f, y, view.width, 22f), "Adjacent maps " + summary.adjacentMaps + " | Excursions " + summary.excursions +
                 " | Creation intents " + summary.mapCreationIntents + " | Construction: " + RealityAdjacentConstructionGuards.RejectionMessage); y += 24f;
+            Widgets.Label(new Rect(0f, y, view.width, 22f), "Fidelity escalations pending " + summary.pendingFidelityEscalations +
+                " | approved " + summary.approvedFidelityEscalations + " | failed " + summary.failedFidelityEscalations); y += 24f;
             foreach (RealityRegionSnapshot region in world.RegionSnapshots())
             {
-                Widgets.Label(new Rect(0f, y, view.width, 22f), region.id + " | " + region.fidelity + " | observed " + region.observationLevel +
-                    " | map " + region.activeMapUniqueId); y += 22f;
+                Widgets.Label(new Rect(0f, y, view.width, 22f), region.id + " | " + region.fidelity + " | authority " + region.authority +
+                    " | observed " + region.observationLevel + " | projectionMap " + region.projectionMapUniqueId); y += 22f;
             }
             foreach (RealityProcessSnapshot process in summary.processRows)
             {
@@ -313,7 +372,12 @@ namespace DeferredReality.Diagnostics
         {
             Map map = Find.CurrentMap;
             if (map == null) return;
-            var request = new RealityCompressionRequest { Map = map, now = Find.TickManager.TicksGame, dryRun = true };
+            if (!RealityRegionMappingService.TryFromProjectionMapId(map.uniqueID, out RealityRegionId regionId))
+            {
+                Log.Message("[DeferredReality][Compression] compression.no-region: The current map has no registered live projection binding.");
+                return;
+            }
+            var request = new RealityCompressionRequest { Map = map, regionId = regionId, now = Find.TickManager.TicksGame, dryRun = true };
             IReadOnlyList<RealityVeto> vetoes = RealityCompressionService.CanCompress(DeferredRealityWorldComponent.Current, request);
             Log.Message("[DeferredReality][Compression] " + string.Join("; ", vetoes.Select(item => item.ToString()).ToArray()));
         }
@@ -322,7 +386,7 @@ namespace DeferredReality.Diagnostics
         public static void DumpAdjacentDiagnostics()
         {
             Log.Message("[DeferredReality][Adjacent]\n" + string.Join("\n",
-                RealityAdjacentSurfaceService.AdjacentDiagnostics(DeferredRealityWorldComponent.Current).ToArray()));
+                RealityProjectionDiagnostics.Lines(DeferredRealityWorldComponent.Current).ToArray()));
         }
 
         [DebugAction(Category, "Monitor adjacent excursion safety now", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]
@@ -341,7 +405,7 @@ namespace DeferredReality.Diagnostics
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
             if (world == null) return;
             Log.Message("[DeferredReality][Adjacent eviction]\n" + string.Join("\n",
-                RealityAdjacentSurfaceService.TryEvictWarmMaps(world, world.Now).ToArray()));
+                RealityProjectionCacheService.TryEvictWarmMaps(world, world.Now).ToArray()));
         }
 
         [DebugAction(Category, "Heartbeat selected adjacent excursion", actionType = DebugActionType.Action, allowedGameStates = AllowedGameStates.PlayingOnMap)]

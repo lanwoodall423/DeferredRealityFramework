@@ -73,8 +73,19 @@ namespace DeferredReality.API
         /// <summary>Returns providers implementing a capability interface in deterministic order.</summary>
         public static IReadOnlyList<T> OfType<T>() where T : class
         {
-            return OrderedProviders().Where(item => item is T)
+            return OrderedProviders().Where(item => item is T &&
+                (!(item is IRealityCapabilitySource source) || source.ProvidesCapability(typeof(T))))
                 .Cast<T>().ToList();
+        }
+
+        /// <summary>Resolves a configured capability without exposing optional facade methods as false providers.</summary>
+        public static bool TryGetCapability<T>(string providerId, out T capability) where T : class
+        {
+            capability = null;
+            if (!TryGet(providerId, out IRealityProvider provider) || !(provider is T value)) return false;
+            if (provider is IRealityCapabilitySource source && !source.ProvidesCapability(typeof(T))) return false;
+            capability = value;
+            return true;
         }
 
         internal static void NotifyWorldReady(DeferredRealityWorldComponent world)
@@ -88,22 +99,13 @@ namespace DeferredReality.API
             {
                 provider.OnRegistered(new RealityProviderContext(world, provider.Registration.providerId, world.Now));
                 world.ReactivateProviderProcesses(provider.Registration.providerId);
-                if (provider is IRegionDescriptorProvider descriptorProvider)
+                if (provider is IRegionDescriptorProvider descriptorProvider &&
+                    (!(provider is IRealityCapabilitySource source) ||
+                     source.ProvidesCapability(typeof(IRegionDescriptorProvider))))
                 {
                     foreach (RealityRegionDescriptor descriptor in descriptorProvider.DescribeRegions(
                         new RealityProviderContext(world, provider.Registration.providerId, world.Now)) ?? Enumerable.Empty<RealityRegionDescriptor>())
                         if (descriptor != null) world.UpsertRegionDescriptor(descriptor);
-                }
-                if (provider is IRealityMigrationHandler migrationHandler && provider.Registration.schemaVersion > 0 &&
-                    !world.IsMigrationCommitted(provider.Registration.providerId, "provider-schema", provider.Registration.schemaVersion))
-                {
-                    var issues = new List<RealityVeto>();
-                    if (migrationHandler.TryMigrate(world, "provider-schema", 0, provider.Registration.schemaVersion, issues) && issues.Count == 0)
-                        world.CommitMigration(provider.Registration.providerId, "provider-schema", provider.Registration.schemaVersion,
-                            "provider-schema-v" + provider.Registration.schemaVersion);
-                    else if (issues.Count > 0)
-                        world.Quarantine("provider-migration", provider.Registration.providerId, provider.Registration.providerId,
-                            string.Join("; ", issues.Select(item => item.ToString()).ToArray()));
                 }
             }
             catch (Exception exception)

@@ -104,12 +104,13 @@ namespace DeferredReality.Testing
             Check(report, "current-map-has-stable-identity", () =>
             {
                 Require(world != null && currentMap != null, "world or current map is unavailable");
-                Require(world.TryRegionForLegacyMap(currentMap.uniqueID, out RealityRegionId regionId) && regionId.IsValid,
+                Require(world.TryRegionForProjectionMapId(currentMap.uniqueID, out RealityRegionId regionId) && regionId.IsValid,
                     "current map has no valid framework region identity");
                 Require(world.TryGetRegion(regionId, out RealityRegionSnapshot snapshot) && snapshot != null,
                     "current map region snapshot is unavailable");
-                Require(snapshot.activeMapUniqueId == currentMap.uniqueID,
-                    "current map region is not marked active");
+                Require(snapshot.authority == RealityRegionAuthority.LiveProjection &&
+                    snapshot.projectionMapUniqueId == currentMap.uniqueID,
+                    "current map region is not the live projection authority");
                 Require(RealityRegionId.Parse(regionId.ToString()) == regionId,
                     "current map region identity does not round-trip");
                 return "map=" + currentMap.uniqueID + " region=" + regionId;
@@ -121,7 +122,7 @@ namespace DeferredReality.Testing
                 foreach (Map map in maps)
                 {
                     Require(map.Tile.Valid, "map " + map.uniqueID + " has an invalid world tile");
-                    Require(world.TryRegionForLegacyMap(map.uniqueID, out RealityRegionId regionId) && regionId.IsValid,
+                    Require(world.TryRegionForProjectionMapId(map.uniqueID, out RealityRegionId regionId) && regionId.IsValid,
                         "map " + map.uniqueID + " has no stable region identity");
                 }
                 return "maps=" + maps.Count;
@@ -190,7 +191,7 @@ namespace DeferredReality.Testing
             });
             Check(report, "adjacent-diagnostics-are-readable", () =>
             {
-                IReadOnlyList<string> lines = RealityAdjacentSurfaceService.AdjacentDiagnostics(world);
+                IReadOnlyList<string> lines = RealityProjectionDiagnostics.Lines(world);
                 Require(lines != null && lines.All(item => item != null), "adjacent diagnostics contained a null line");
                 return "lines=" + lines.Count;
             });
@@ -237,7 +238,7 @@ namespace DeferredReality.Testing
                 _ = RealityDiagnostics.Snapshot(world);
                 _ = RealityDiagnostics.Dump(world);
                 _ = RealityAuditService.Audit(world);
-                _ = RealityAdjacentSurfaceService.AdjacentDiagnostics(world);
+                _ = RealityProjectionDiagnostics.Lines(world);
                 Require(world.Revision == revision, "read-only diagnostics changed world revision");
                 Require(world.RegionSnapshots().Count == regionCount &&
                     world.AdjacentMapSnapshots().Count == adjacentCount &&

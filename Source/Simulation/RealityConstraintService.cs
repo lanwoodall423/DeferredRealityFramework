@@ -46,7 +46,7 @@ namespace DeferredReality.Simulation
                     result.conflicted++;
                     continue;
                 }
-                if (!RealityProviderRegistry.TryGet(actual.providerId, out IRealityProvider registered) || !(registered is IConstraintResolver resolver))
+                if (!RealityProviderRegistry.TryGetCapability(actual.providerId, out IConstraintResolver resolver))
                 {
                     result.unresolved++;
                     continue;
@@ -114,10 +114,10 @@ namespace DeferredReality.Simulation
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.Ordinal);
             if (subjects.Any())
-                return new HashSet<string>(subjects.Select(subject => "legacy:" + prefix + "|subject:" + subject), StringComparer.Ordinal);
+                return new HashSet<string>(subjects.Select(subject => "implicit:" + prefix + "|subject:" + subject), StringComparer.Ordinal);
             if (facets.Count > 0)
-                return new HashSet<string>(facets.Select(facet => "legacy:" + prefix + "|facet:" + facet), StringComparer.Ordinal);
-            return new HashSet<string>(new[] { "legacy:" + prefix + "|region:" + (value.regionId ?? string.Empty) }, StringComparer.Ordinal);
+                return new HashSet<string>(facets.Select(facet => "implicit:" + prefix + "|facet:" + facet), StringComparer.Ordinal);
+            return new HashSet<string>(new[] { "implicit:" + prefix + "|region:" + (value.regionId ?? string.Empty) }, StringComparer.Ordinal);
         }
 
         private static HashSet<string> Keys(IEnumerable<string> values)

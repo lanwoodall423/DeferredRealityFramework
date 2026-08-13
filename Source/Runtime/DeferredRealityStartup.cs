@@ -32,7 +32,7 @@ namespace DeferredReality.Runtime
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
             if (world == null) return;
             world.RegisterMap(map);
-            Materialization.RealityAdjacentSurfaceService.TrackWarm(map);
+            Materialization.RealityProjectionCacheService.TrackWarm(map);
         }
 
         /// <summary>Runs map-related mutations after RimWorld's worker-thread long event completes.</summary>
@@ -51,7 +51,7 @@ namespace DeferredReality.Runtime
                 RunOnMainThread(() => OnMapDeinit(map));
                 return;
             }
-            Materialization.RealityAdjacentSurfaceService.Forget(map);
+            Materialization.RealityProjectionCacheService.Forget(map);
             DeferredRealityWorldComponent.Current?.UnregisterMap(map);
         }
     }

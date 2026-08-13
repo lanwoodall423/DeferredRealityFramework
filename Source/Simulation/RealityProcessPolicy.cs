@@ -66,11 +66,37 @@ namespace DeferredReality.Simulation
             process.nextDueTick = nextDueTick;
         }
 
+        public static void SetProjectionAuthoritative(RealityProcessRecord process, string error)
+        {
+            if (process == null || process.cancelled) return;
+            process.paused = true;
+            process.pauseReason = RealityProcessPauseReason.ProjectionAuthoritative;
+            process.lastError = error;
+        }
+
+        public static void SetProjectionTransition(RealityProcessRecord process, string error)
+        {
+            if (process == null || process.cancelled) return;
+            process.paused = true;
+            process.pauseReason = RealityProcessPauseReason.ProjectionTransition;
+            process.lastError = error;
+        }
+
+        public static void SetFidelityEscalation(RealityProcessRecord process, string requestId, string error)
+        {
+            if (process == null || process.cancelled) return;
+            process.paused = true;
+            process.pauseReason = RealityProcessPauseReason.FidelityEscalation;
+            process.pendingEscalationRequestId = requestId;
+            process.lastError = error;
+        }
+
         public static bool Resume(RealityProcessRecord process, long nextDueTick)
         {
             if (process == null || process.cancelled) return false;
             process.paused = false;
             process.pauseReason = RealityProcessPauseReason.None;
+            process.pendingEscalationRequestId = null;
             process.lastError = null;
             process.nextDueTick = nextDueTick;
             return true;
@@ -82,6 +108,7 @@ namespace DeferredReality.Simulation
             process.cancelled = true;
             process.paused = false;
             process.pauseReason = RealityProcessPauseReason.None;
+            process.pendingEscalationRequestId = null;
             process.cancelledTick = cancelledAt;
             process.nextDueTick = long.MaxValue;
             return true;

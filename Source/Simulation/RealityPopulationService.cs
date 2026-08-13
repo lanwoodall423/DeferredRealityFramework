@@ -81,7 +81,7 @@ namespace DeferredReality.Simulation
                 result.error = sequenceError;
                 return result;
             }
-            if (RealityProviderRegistry.TryGet(source.providerId, out IRealityProvider registered) && registered is IPopulationProvider populationProvider)
+            if (RealityProviderRegistry.TryGetCapability(source.providerId, out IPopulationProvider populationProvider))
             {
                 var vetoes = new List<RealityVeto>();
                 bool allowed;
@@ -153,7 +153,7 @@ namespace DeferredReality.Simulation
                 result.error = sequenceError;
                 return result;
             }
-            if (RealityProviderRegistry.TryGet(record.providerId, out IRealityProvider registered) && registered is IPopulationProvider populationProvider)
+            if (RealityProviderRegistry.TryGetCapability(record.providerId, out IPopulationProvider populationProvider))
             {
                 var vetoes = new List<RealityVeto>();
                 bool allowed;
@@ -181,8 +181,8 @@ namespace DeferredReality.Simulation
                 result.error = "Population mutation failed and was rolled back.";
                 return result;
             }
-            if (kind == "active-map-reconcile" && RealityProviderRegistry.TryGet(record.providerId, out IRealityProvider owner) &&
-                owner is IPopulationProvider activeMapProvider)
+            if (kind == "active-map-reconcile" && RealityProviderRegistry.TryGetCapability(record.providerId,
+                out IPopulationProvider activeMapProvider))
             {
                 try { activeMapProvider.ReconcileActiveMap(new RealityProviderContext(world, record.providerId, now), record.Clone(), operationId); }
                 catch (Exception exception) { world.Quarantine("population-reconcile", operationId, record.providerId, exception.Message); }

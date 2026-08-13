@@ -5,48 +5,39 @@ using Verse;
 
 namespace DeferredReality.API
 {
-    /// <summary>Public mapping facade separating active Map references from durable region identities.</summary>
+    /// <summary>Public mapping facade separating live Map projections from durable region identities.</summary>
     public static class RealityRegionMappingService
     {
-        /// <summary>Maps an active Map to a stable region, creating only its descriptor and alias.</summary>
+        /// <summary>Maps a live Map to a stable region and records only its projection binding.</summary>
         public static RealityRegionId ForMap(Map map)
         {
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
             return world?.RegisterMap(map) ?? default(RealityRegionId);
         }
 
-        /// <summary>Finds the currently materialized Map for a region without claiming one exists.</summary>
+        /// <summary>Finds the current live projection for a region without claiming one exists.</summary>
         public static bool TryGetActiveMap(RealityRegionId regionId, out Map map)
         {
             map = null;
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
-            if (world == null || !world.TryGetRegion(regionId, out RealityRegionSnapshot region) || region.activeMapUniqueId < 0) return false;
-            map = Find.Maps?.FirstOrDefault(item => item != null && item.uniqueID == region.activeMapUniqueId);
+            if (world == null || !world.TryGetRegion(regionId, out RealityRegionSnapshot region) ||
+                region.authority != RealityRegionAuthority.LiveProjection || region.projectionMapUniqueId < 0) return false;
+            map = Find.Maps?.FirstOrDefault(item => item != null && item.uniqueID == region.projectionMapUniqueId);
             return map != null;
         }
 
-        /// <summary>Returns adjacent regions represented by persisted topology links.</summary>
+        /// <summary>Returns adjacent regions represented by enabled persisted connections.</summary>
         public static IReadOnlyList<RealityRegionId> Adjacent(RealityRegionId regionId, string kind = null)
         {
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
-            if (world == null) return Array.Empty<RealityRegionId>();
-            var result = new List<RealityRegionId>();
-            foreach (RealityTopologyLink link in world.TopologySnapshots(regionId.ToString()))
-            {
-                if (!string.IsNullOrEmpty(kind) && link.kind != kind) continue;
-                bool outgoing = link.fromRegionId == regionId.ToString();
-                if (!outgoing && link.oneWay) continue;
-                string target = outgoing ? link.toRegionId : link.fromRegionId;
-                if (RealityRegionId.TryParse(target, out RealityRegionId parsed) && !result.Contains(parsed)) result.Add(parsed);
-            }
-            return result.OrderBy(item => item.ToString(), StringComparer.Ordinal).ToList();
+            return world?.Neighbors(regionId, kind) ?? Array.Empty<RealityRegionId>();
         }
 
-        /// <summary>Resolves a legacy Map.uniqueID alias after migration.</summary>
-        public static bool TryFromLegacyMapId(int mapId, out RealityRegionId regionId)
+        /// <summary>Resolves a live projection binding by Map.uniqueID.</summary>
+        public static bool TryFromProjectionMapId(int mapId, out RealityRegionId regionId)
         {
             regionId = default(RealityRegionId);
-            return DeferredRealityWorldComponent.Current?.TryRegionForLegacyMap(mapId, out regionId) == true;
+            return DeferredRealityWorldComponent.Current?.TryRegionForProjectionMapId(mapId, out regionId) == true;
         }
     }
 }

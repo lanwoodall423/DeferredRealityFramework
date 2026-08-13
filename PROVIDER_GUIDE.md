@@ -1,7 +1,7 @@
 # Provider Guide
 
 Deferred Reality providers reference `DeferredRealityFramework.dll` and register a
-stable `IRealityProvider` from a `StaticConstructorOnStartup` initializer. The
+stable provider facade from a `StaticConstructorOnStartup` initializer. The
 framework never references a provider assembly.
 
 Provider projects are not part of the framework's default build or release
@@ -9,7 +9,138 @@ package. Build and package an adapter from the consuming mod repository against
 the released DRF assembly. The framework's pure/static integrity checks validate
 the generic boundary but do not replace provider gameplay or live RimWorld tests.
 
-## Registration
+## The simple path (recommended)
+
+Most providers need only four things: describe their latent state, run bounded
+analytical processes, validate aggregate/identity records, and attach a service
+for any map or transfer work. Compose those pieces with
+`SimpleRealityProviderBuilder`. It produces one registered facade, advertises
+only the capabilities that were actually configured, and leaves scheduling,
+projection authority, persistence, exactly-once markers, escalation records,
+and transaction rollback to DRF.
+
+```csharp
+private static SimpleRealityProvider BuildFrameworkProvider(WildernessGameplay gameplay)
+{
+    return new SimpleRealityProviderBuilder("example.wilderness", "Example wilderness")
+        .Configure(registration =>
+        {
+            registration.order = 200;
+            registration.defaultFidelity = RealityFidelity.Statistical;
+            registration.operationRetentionTicks = -1;
+        })
+        .OnRegistered(gameplay.OnRegistered)
+        .WithFidelity(RealityFidelityMask.All)
+        .AllowTransition(RealityFidelity.Dormant, RealityFidelity.Statistical)
+        .AllowTransition(RealityFidelity.Statistical, RealityFidelity.Materialized,
+            RealityFidelityTransitionMechanism.Materialization)
+        .AllowTransition(RealityFidelity.Materialized, RealityFidelity.Statistical,
+            RealityFidelityTransitionMechanism.Compression)
+        .WithAnalyticalProcess(gameplay.CanExecuteProcess, gameplay.ExecuteProcess,
+            RealityFidelityMask.Statistical, runsWhileLiveProjection: false)
+        .WithPopulations(new SimplePopulationDefinition
+        {
+            canChange = gameplay.CanChangePopulation,
+            reconcileActiveMap = gameplay.ReconcileActiveMap
+        })
+        .WithAnchors(new SimpleAnchorDefinition { validate = gameplay.ValidateAnchor })
+        .WithDiagnostics(gameplay.DiagnosticLines)
+        .UseAdvanced(gameplay) // map, compression, transfer, and excursion hooks only
+        .Build();
+}
+
+[StaticConstructorOnStartup]
+public static class ExampleStartup
+{
+    static ExampleStartup()
+    {
+        RealityProviderRegistry.Register(BuildFrameworkProvider(new WildernessGameplay()));
+    }
+}
+```
+
+The callback types are deliberately gameplay-shaped: a process receives
+elapsed time and a deterministic stream, population callbacks validate a
+single aggregate operation, and map reconciliation receives the framework
+context. A provider normally uses `RealityPopulationService` for consume,
+release, reproduction, mortality, migration, and active-map reconciliation;
+`DeferredRealityWorldComponent` for regions, connections, anchors, constraints,
+observations, and process records; and `RealityProcessScheduler` indirectly
+through the process records it schedules. These helpers keep the common path
+out of transaction journals and rollback code.
+
+### Wildlife reference integration
+
+Wildlife is the reference implementation shipped beside this guide. Its
+`BuildFrameworkProvider` follows the same composition exactly:
+
+```csharp
+new SimpleRealityProviderBuilder(ProviderId, "Wildlife regional ecology")
+    .OnRegistered(OnRegistered)
+    .WithFidelity(wildlifeFidelity)
+    .WithProcess(new SimpleProcessDefinition { canExecute = CanExecute, execute = Execute })
+    .WithPopulations(new SimplePopulationDefinition
+    {
+        canChange = CanChangePopulation,
+        reconcileActiveMap = ReconcileActiveMap
+    })
+    .WithAnchors(new SimpleAnchorDefinition { validate = ValidateAnchor })
+    .WithConstraints(new SimpleConstraintDefinition { canResolve = CanResolve, resolve = Resolve })
+    .WithDiagnostics(DiagnosticLines)
+    .UseAdvanced(this)
+    .Build();
+```
+
+Its gameplay code then remains ordinary regional simulation:
+
+- latent regions seed one aggregate `RealityPopulationRecord` per species and
+  schedule one stable daily process;
+- the process receives elapsed days, applies deterministic growth/mortality,
+  and calls `RealityPopulationService.Transfer` for eligible graph edges;
+- the scheduler pauses that process whenever `LiveProjection` authority owns
+  the map, so births and deaths are not counted twice;
+- map reconciliation imports ordinary animals as populations and significant
+  animals as anchors; compression reconciles survivors and deaths through the
+  provider's advanced map/compression service;
+- player interaction or an important anchor returns a typed escalation result,
+  which DRF persists and pauses without creating a map automatically;
+- `DiagnosticLines` reports population, connection, projection, and transfer
+  state without exposing rollback machinery to gameplay callers.
+
+Frontier uses the same facade for its regional process, site anchors,
+constraints, observations, and diagnostics, while retaining its exploration
+map and landmark consistency service as an advanced component.
+
+### What the builder guarantees
+
+`SimpleRealityProvider` is not a second transaction system. It is a capability
+adapter. The registry's `TryGetCapability<T>` and `OfType<T>` ignore facade
+methods whose service was not configured, so an absent materialization or
+compression service cannot accidentally become a successful no-op. Provider
+exceptions, bounded scheduler work, live-map gating, typed escalation,
+projection binding, and transactional rollback remain framework-owned.
+
+## Advanced path
+
+Use the low-level interfaces below when a provider owns maps, excursions,
+transfer journals, provider-specific consistency obligations, or nontrivial
+rollback state. Advanced services can be attached to the simple facade with
+`UseAdvanced(...)`; they do not need a second registration. A provider may also
+implement the interfaces directly when composition is not a useful fit.
+
+The interfaces that deliberately remain low-level are `IMaterializationProvider`
+and `IStageAwareMaterializationProvider` (map transaction stages),
+`ITransactionalAnchorProvider`/`ITransactionalAnchorCommitProvider` (identity
+restoration), `ICompressionProvider` (reconciliation and compensation),
+`IAdjacentRegionTransferHost` (exact Pawn movement and journals),
+`IRealityExcursionTaskProvider`/`IRealityExcursionTaskCleanupProvider` (leased
+runtime tasks), `IRealityMapIdentityProvider` (projection ownership), and
+`IRealityMaterializationConsistencyProvider` (provider-specific obligations).
+They are low-level because each one owns a separate trust boundary or rollback
+obligation; the simple facade can carry them without exposing them to ordinary
+latent-simulation code.
+
+## Advanced registration
 
 ```csharp
 using System.Collections.Generic;
@@ -20,7 +151,6 @@ public sealed class ExampleProvider : IRealityProvider
     {
         providerId = "example.mod",
         semanticApiVersion = 1,
-        schemaVersion = 1,
         capabilities = RealityProviderCapability.Populations,
         order = 400,
         // -1 means exactly-once markers remain durable forever.
@@ -54,15 +184,30 @@ Implement only the interfaces needed by the provider:
 - `IRegionDescriptorProvider` describes regions without requiring a Map.
 - `IRealityProcessProvider` receives continuous `elapsedTicks`, bounded analytical
   step count, and a deterministic RNG seeded by process execution count.
+- `IRealityFidelityProvider` declares supported fidelities, legal transitions,
+  per-process fidelity policy, and post-transition notification. Use `Dormant`
+  for durable facts without recurring work, `Statistical` for aggregate
+  analytical evolution, `Narrative` for bounded abstract events, and
+  `Materialized` only for spatial Map resolution. `LiveProjection` remains a
+  separate authority state.
+- A `RealityProcessResult` may carry a typed `RealityProcessEscalationRequest`.
+  A request creates a durable pending record and pauses the process; a provider
+  may use `Decline` when it can safely retain the current abstraction. Hosts
+  approve and satisfy requests explicitly, and escalation never mass-creates
+  maps automatically.
 - `IPopulationProvider` validates atomic aggregate changes.
 - `IAnchorProvider` validates identity-bearing restoration; it does not imply safe pawn compression.
 - `ITransactionalAnchorProvider` may prepare/apply/validate/rollback anchor
   restoration; `ITransactionalAnchorCommitProvider` can release transaction
   bookkeeping after commit. Implement these when anchor materialization mutates
-  pawns, Things, maps, or provider-owned state. Legacy `OnAnchorMaterialized`
-  remains a final idempotent notification only.
+  pawns, Things, maps, or provider-owned state. Anchor restoration belongs in
+  these transactional hooks or the provider's materialization `Apply`; there is
+  no second post-commit anchor callback.
 - `IConstraintResolver` resolves only the provider's payload types.
 - `IMaterializationProvider` participates in plan, prepare, apply, validate, and rollback.
+- `IRealityMaterializationConsistencyProvider` translates active observations and
+  constraints into structured spatial obligations and validates the realized
+  map. Its hooks are provider-owned and transactional failure is a veto.
 - `IRealityMapIdentityProvider` must claim every nonstandard map with an explicit
   layer/custom/instance/provider identity. Claims are scoped to the registering
   provider and conflicting claims fail closed.
@@ -75,8 +220,40 @@ process with `ProviderFailure`; a provider veto follows the same cause. A missin
 provider uses `ProviderUnavailable`, which is automatically resumed when that
 provider registers again. Manual and provider-requested pauses are not cleared by
 registration and require explicit resume. A materialization or compression
-failure restores the captured latent state. Never remove a legacy owner before a
-migration marker is committed.
+failure restores the captured latent state.
+
+Projection authority is explicit. `Latent` means the framework's aggregate store
+owns the region; `Materializing` and `Compressing` reserve the region for a
+transaction; `LiveProjection` makes the bound Map authoritative for spatial state;
+and `Quarantined` blocks autonomous transitions. The scheduler pauses analytical
+processes for live or transitioning regions, so providers must not apply the same
+effect through both a live map and an aggregate process. `RealityFidelity` describes
+resolution separately from authority: `Dormant` has no recurring simulation,
+`Statistical` evolves aggregates, `Narrative` resolves discrete abstract events,
+and `Materialized` supports live spatial state. A live projection normally has
+Materialized fidelity, but fidelity alone never claims a Map.
+
+Regions describe places. Connections describe topology. Transfers/processes
+describe changes across topology.
+
+Use `RealityRegionConnection` for provider-neutral relationships such as
+migration eligibility, expedition reachability, diffusion, or adjacent
+materialization hints. Create IDs with `RealityRegionConnection.StableId` using
+the endpoint identities, direction, semantic kind, owner namespace, and a
+provider-defined identity key. Use one bidirectional record when traversal is
+symmetrical; do not create two records for the reverse direction. Connections
+are persisted and inspectable through `ConnectionSnapshots`,
+`TryGetConnection`, `OutgoingConnections`, `IncomingConnections`, and
+`Neighbors`. These APIs expose immediate topology only; they are not a
+pathfinding engine. Keep actual population changes, Pawn movement, excursion
+ownership, map creation, compression, and rollback in their existing process or
+transaction systems.
+
+Connection `ownerNamespace` is informational ownership, not a requirement that
+the provider be loaded. Missing providers must leave the opaque connection
+record intact. Set `lifecycle` to `Disabled` when a relationship is temporarily
+unusable; disabled records are visible in `ConnectionSnapshots` and omitted from
+normal directional queries. Provider payloads and metadata are opaque to DRF.
 
 ## Retention
 
@@ -87,13 +264,13 @@ persisted cursor with `AdvanceExactlyOnceCursor` only after the state and marker
 commit. Set a positive `operationRetentionTicks` and list each safe
 `compactableOperationKinds`; unlisted kinds remain durable. Strict domains require
 contiguous sequences, while gap-tolerant domains still reject every sequence at or
-below the cursor. Legacy operation-ID-only markers and old tick-only watermarks
-remain durable.
+below the cursor. Markers without a provider-declared replay boundary remain
+durable.
 Cancelled process records use the separate `cancelledProcessRetentionTicks`
 opt-in and are removed only when no persisted reference exists. The framework
 retains interrupted transfer journals, caps terminal journals deterministically,
-and never removes a map alias while a live map or recovery record can still refer
-to it. Providers may opt in only for stable non-replayable event domains with a
+and never removes a projection binding while a live map or recovery record can
+still refer to it. Providers may opt in only for stable non-replayable event domains with a
 durable replay boundary.
 
 ## Population rules
@@ -124,23 +301,19 @@ adjacent site. Set both `RealityMaterializationRequest.providerId` and
 `adjacentMap.providerId` to the integration responsible for the temporary site
 even when the region is a shared `core` `Surface(tile)` identity. Do not rewrite
 the region namespace to match the provider. Adjacent materialization requires a
-provider-scoped map factory and an explicit provider map-identity claim; it never
-uses the legacy fallback factory.
+provider-scoped map factory and an explicit provider map-identity claim; there is
+no unscoped fallback factory.
 
 The framework creates a transaction-scoped map-creation intent before invoking the
 factory. The intent is the only authorization for a newly generated map to be
 reclassified. Map readiness and provider map-component callbacks may both call
 `RegisterMap`, but they converge through the same intent-aware idempotent path.
-Existing ordinary maps, persisted aliases, stale intents, and same-tile conflicts
-fail closed.
+Existing ordinary maps, stale intents, and same-tile conflicts fail closed.
 
-Providers repairing a legacy alias that was persisted against the wrong region may
-use `DeferredRealityWorldComponent.TryMigrateMapIdentity` during their map
-component initialization. It validates the destination tile, preserves the old
-region as dormant state, atomically rebinds the legacy `Map.uniqueID` alias, and
-restores the prior alias/region state if the new active-map link cannot be set.
-This additive API is intentionally separate from `RegisterMap(map, regionId)`,
-which continues to reject arbitrary alias remapping.
+`RegisterMap(map, regionId)` is the only explicit projection binding operation.
+It validates the map identity and tile, rejects competing bindings, and marks the
+region `LiveProjection`. Providers must not invent alias-repair or identity-
+rebinding paths around that authority check.
 
 Compression ownership is explicit: `RealityCompressionRequest.providerId`, or the
 region provider namespace when omitted, selects one deterministic provider list.
@@ -197,3 +370,33 @@ operations, declare the replay threat and advance a persisted provider/kind/doma
 watermark only at a durable boundary proving replay is impossible. Retention age
 and metadata alone are not proof. Applied-operation and journal writes defer broad
 compaction to bounded maintenance; provider mutation calls must remain cheap.
+
+## Population, anchor, and observation rulebook
+
+Use the smallest representation that preserves gameplay meaning:
+
+1. Use `RealityPopulationRecord` for fungible quantities such as ordinary wild
+   muffalo, biomass, generic insects, group roles, food, or generic raiders.
+   Mark it `compressionSignificance = Aggregate`. If one member becomes named,
+   bonded, quest-critical, player-controlled, or otherwise individually
+   meaningful, create a `RealityAnchorRecord` and add its ID to the population's
+   `anchoredMemberIds`; do not leave that identity only in the amount.
+2. Use `RealityAnchorRecord` for a non-fungible identity that must survive
+   abstraction. Mark it `Identity`. The provider owns restoration of its payload
+   and any RimWorld object. A non-empty `optionalRimWorldLoadId` is safe for
+   compression only after the provider sets `externalReferenceState` to
+   `ProviderResolved`; unknown, player-controlled, quest-critical, or unsafe
+   references veto compression.
+3. Use `RealityObservationRecord` for an established fact at a stated precision,
+   and mark it `EstablishedFact` when it must constrain rematerialization. Mark
+   genuinely disposable rumor/sensor detail `Disposable`. Player-observed facts
+   are always established facts. Use `RealityConstraint` for durable causal or
+   compatibility rules that must be enforced, not as a hidden identity store.
+
+The framework's `RealityCompressionPreservation.Validate` check is automatic
+before provider compression. It rejects unknown significance, non-aggregate
+population state, missing identity references, unsafe external references, and
+constraints that point to missing records. `PlayerBound` and `QuestBound` are
+explicit vetoes. Providers must use `CanCompress`, `Validate`, `Commit`, and
+`Rollback` to reconcile live deaths, births, movement, and identity restoration;
+the framework does not copy arbitrary live Pawns into latent state.

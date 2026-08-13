@@ -21,11 +21,17 @@ namespace DeferredReality.PureTests
                 AppDomain.CurrentDomain.AssemblyResolve += ResolveRimWorldAssembly;
                 RealityThreadGuard.EstablishMainThread();
                 RegionRoundTrip();
+                RegionConnectionGraphQueries();
                 DeterministicSeedAndStream();
                 ProviderScopedFactoryIsolation();
                 SchedulerGateAndOrdering();
                 CatchUpBoundaries();
                 PauseCauseTransitions();
+                ProjectionAuthorityContracts();
+                CompressionPreservationContracts();
+                MaterializationObservationConsistencyContracts();
+                FidelityContractsAndEscalationTypes();
+                SimpleProviderCompositionContracts();
                 RetentionSelection();
                 TransitionCompensationSeams();
                 PartialPrepareRollbackAndRetention();
@@ -34,7 +40,7 @@ namespace DeferredReality.PureTests
                 MapCreationIntentBoundaries();
                 ConstraintDomainsAndFacets();
                 DuplicateRepairSemantics();
-                SaveCompatibleDefaults();
+                DefaultStateContracts();
                 AdjacentPolicyBoundaries();
                 HarmonyTargetResolvers();
                 HarmonyPatchRegistrationSmoke();
@@ -79,6 +85,82 @@ namespace DeferredReality.PureTests
             Require(original.GetHashCode() == parsed.GetHashCode(), "region hash changed after round-trip");
         }
 
+        private static void RegionConnectionGraphQueries()
+        {
+            RealityRegionId left = RealityRegionId.Surface(101);
+            RealityRegionId right = RealityRegionId.Surface(102);
+            RealityRegionId remote = RealityRegionId.Surface(103);
+            var world = new DeferredRealityWorldComponent(null);
+            world.EnsureRegion(left);
+            world.EnsureRegion(right);
+            world.EnsureRegion(remote);
+
+            string bidirectionalId = RealityRegionConnection.StableId(left, right,
+                RealityRegionConnectionDirection.Bidirectional, "pure-edge", "pure-tests", "main");
+            Require(world.UpsertConnection(new RealityRegionConnection
+            {
+                connectionId = bidirectionalId,
+                sourceRegionId = left.ToString(),
+                destinationRegionId = right.ToString(),
+                direction = RealityRegionConnectionDirection.Bidirectional,
+                kind = "pure-edge",
+                ownerNamespace = "pure-tests",
+                identityKey = "main"
+            }), "bidirectional connection was rejected");
+            Require(world.OutgoingConnections(left).Count == 1 && world.OutgoingConnections(right).Count == 1,
+                "bidirectional connection was not indexed from both endpoints");
+            Require(world.IncomingConnections(left).Count == 1 && world.IncomingConnections(right).Count == 1,
+                "bidirectional connection was not indexed as incoming at both endpoints");
+            Require(world.Neighbors(left).Count == 1 && world.Neighbors(left)[0] == right,
+                "neighbor query did not return the opposite endpoint");
+            Require(world.TryGetConnection(bidirectionalId, out RealityRegionConnection snapshot) &&
+                snapshot.sourceRegionId == left.ToString(), "stable connection lookup failed");
+            snapshot.lifecycle = RealityRegionConnectionLifecycle.Disabled;
+            Require(world.UpsertConnection(snapshot), "disabled connection update was rejected");
+            Require(world.ConnectionSnapshots(left.ToString()).Count == 1 &&
+                world.OutgoingConnections(left).Count == 0, "disabled connection was not inspectable-but-inactive");
+
+            string directedId = RealityRegionConnection.StableId(right, remote,
+                RealityRegionConnectionDirection.Directed, "pure-route", "pure-tests", "directed");
+            Require(world.UpsertConnection(new RealityRegionConnection
+            {
+                connectionId = directedId,
+                sourceRegionId = right.ToString(),
+                destinationRegionId = remote.ToString(),
+                direction = RealityRegionConnectionDirection.Directed,
+                kind = "pure-route",
+                ownerNamespace = "pure-tests",
+                identityKey = "directed"
+            }), "directed connection was rejected");
+            Require(world.OutgoingConnections(right, "pure-route").Count == 1 &&
+                world.OutgoingConnections(remote, "pure-route").Count == 0 &&
+                world.IncomingConnections(remote, "pure-route").Count == 1,
+                "directed connection query semantics were incorrect");
+
+            string conflictId = RealityRegionConnection.StableId(left, right,
+                RealityRegionConnectionDirection.Directed, "pure-conflict", "pure-tests", "same-id");
+            Require(world.UpsertConnection(new RealityRegionConnection
+            {
+                connectionId = conflictId,
+                sourceRegionId = left.ToString(),
+                destinationRegionId = right.ToString(),
+                direction = RealityRegionConnectionDirection.Directed,
+                kind = "pure-conflict",
+                ownerNamespace = "pure-tests",
+                identityKey = "same-id"
+            }), "baseline conflict connection was rejected");
+            Require(!world.UpsertConnection(new RealityRegionConnection
+            {
+                connectionId = conflictId,
+                sourceRegionId = right.ToString(),
+                destinationRegionId = left.ToString(),
+                direction = RealityRegionConnectionDirection.Directed,
+                kind = "pure-conflict",
+                ownerNamespace = "pure-tests",
+                identityKey = "same-id"
+            }), "conflicting connection ID was accepted");
+        }
+
         private static void DeterministicSeedAndStream()
         {
             int left = RealityDeterminism.Seed("world", "region", "provider", "process", 7);
@@ -102,13 +184,8 @@ namespace DeferredReality.PureTests
             Require(RealityMapFactoryRegistry.Unregister("pure.first", first), "first factory did not unregister");
             Require(!RealityMapFactoryRegistry.TryGet("pure.first", out _), "unregistered factory remained visible");
             RealityMapFactoryRegistry.Unregister("pure.second", second);
-            var fallback = new TestFactory();
-            RealityMapFactoryRegistry.Factory = fallback;
-            Require(!RealityMapFactoryRegistry.TryGetScoped("missing", out _),
-                "provider-scoped factory resolution used the legacy fallback");
-            Require(RealityMapFactoryRegistry.TryGet("missing", out IRealityMapFactory fallbackResolved) &&
-                ReferenceEquals(fallback, fallbackResolved), "legacy fallback behavior changed");
-            RealityMapFactoryRegistry.Factory = null;
+            Require(!RealityMapFactoryRegistry.TryGet("missing", out _),
+                "unregistered provider unexpectedly resolved a map factory");
         }
 
         private static void SchedulerGateAndOrdering()
@@ -164,6 +241,414 @@ namespace DeferredReality.PureTests
                 "explicit resume did not clear the pause");
         }
 
+        private static void ProjectionAuthorityContracts()
+        {
+            var descriptor = new RealityRegionDescriptor();
+            Require(descriptor.authority == RealityRegionAuthority.Latent && descriptor.projectionMapUniqueId == -1,
+                "a new region did not default to latent state without a projection binding");
+            Require(Enum.IsDefined(typeof(RealityFidelity), "Materialized"),
+                "Materialized is not exposed as an explicit fidelity value");
+            Require(RealityFidelityRules.Rank(RealityFidelity.Materialized) > RealityFidelityRules.Rank(RealityFidelity.Narrative) &&
+                RealityFidelityRules.Rank(RealityFidelity.Narrative) > RealityFidelityRules.Rank(RealityFidelity.Statistical),
+                "fidelity ordering is not deterministic");
+            var process = new RealityProcessRecord { processId = "projection", providerId = "provider" };
+            RealityProcessPausePolicy.SetProjectionAuthoritative(process, "live map owns state");
+            Require(process.paused && process.pauseReason == RealityProcessPauseReason.ProjectionAuthoritative,
+                "live projection did not pause aggregate work with the authoritative cause");
+            RealityProcessPausePolicy.SetProjectionTransition(process, "transition owns state");
+            Require(process.paused && process.pauseReason == RealityProcessPauseReason.ProjectionTransition,
+                "projection transition did not retain an explicit pause cause");
+        }
+
+        private static void CompressionPreservationContracts()
+        {
+            RealityRegionId region = RealityRegionId.Surface(701);
+            var world = new DeferredRealityWorldComponent(null);
+            world.EnsureRegion(region, "preservation", 0);
+            var population = new RealityPopulationRecord
+            {
+                populationId = "wildlife:muffalo:701",
+                providerId = "wildlife",
+                kind = "wildlife",
+                subjectId = "species:muffalo",
+                regionId = region.ToString(),
+                amount = 23f,
+                compressionSignificance = RealityCompressionSignificance.Aggregate,
+                established = true
+            };
+            var anchor = new RealityAnchorRecord
+            {
+                anchorId = "wildlife:muffalo:named-1",
+                providerId = "wildlife",
+                typeId = "named-animal",
+                regionId = region.ToString(),
+                compressionSignificance = RealityCompressionSignificance.Identity,
+                externalReferenceState = RealityExternalReferenceState.ProviderResolved,
+                optionalRimWorldLoadId = "Pawn_NamedMuffalo",
+                importance = 3
+            };
+            population.anchoredMemberIds.Add(anchor.anchorId);
+            Require(world.UpsertPopulation(population) && world.UpsertAnchor(anchor),
+                "aggregate and identity records were not accepted");
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "wildlife:observation:named-muffalo",
+                regionId = region.ToString(),
+                subjectId = anchor.anchorId,
+                compressionSignificance = RealityCompressionSignificance.EstablishedFact,
+                playerObserved = true,
+                certainty = 1f,
+                confidence = 1f,
+                estimate = "named muffalo is present"
+            }), "established observation was not accepted");
+            Require(RealityCompressionPreservation.Validate(world, region, "wildlife").Count == 0,
+                "safe aggregate, anchor, and established observation state was vetoed");
+
+            world.UpsertRegionDescriptor(new RealityRegionDescriptor
+            {
+                regionId = region.ToString(),
+                fidelity = RealityFidelity.Materialized,
+                authority = RealityRegionAuthority.LiveProjection,
+                projectionMapUniqueId = 701,
+                lastUpdateTick = 1
+            });
+            Require(world.PopulationSnapshots(region.ToString()).Single().record.amount == 23f,
+                "materialization changed the fungible aggregate unexpectedly");
+            Require(world.AnchorSnapshots(region.ToString()).Any(item => item.record.anchorId == anchor.anchorId),
+                "materialization lost the identity anchor");
+
+            world.UpsertRegionDescriptor(new RealityRegionDescriptor
+            {
+                regionId = region.ToString(),
+                fidelity = RealityFidelity.Statistical,
+                authority = RealityRegionAuthority.Latent,
+                projectionMapUniqueId = -1,
+                lastUpdateTick = 2
+            });
+            Require(world.PopulationSnapshots(region.ToString()).Single().record.amount == 23f &&
+                world.AnchorSnapshots(region.ToString()).Any(item => item.record.anchorId == anchor.anchorId) &&
+                world.ObservationSnapshots(region.ToString()).Any(item => item.observationId == "wildlife:observation:named-muffalo"),
+                "compression did not preserve aggregate, identity, and established observation state");
+
+            anchor.externalReferenceState = RealityExternalReferenceState.Unknown;
+            Require(world.UpsertAnchor(anchor), "unsafe anchor update was rejected before validation");
+            IReadOnlyList<RealityVeto> unsafeVetoes = RealityCompressionPreservation.Validate(world, region, "wildlife");
+            Require(unsafeVetoes.Any(item => item.code == "compression.unsafe-external-reference"),
+                "unknown external identity reference did not veto compression");
+            anchor.externalReferenceState = RealityExternalReferenceState.ProviderResolved;
+            Require(world.UpsertAnchor(anchor), "resolved anchor update was rejected");
+            Require(RealityRetentionPolicy.FindOldestDiscardableObservation(new[]
+                {
+                    new RealityObservationRecord { observationId = "disposable", tick = 1,
+                        compressionSignificance = RealityCompressionSignificance.Disposable },
+                    new RealityObservationRecord { observationId = "established", tick = 0,
+                        compressionSignificance = RealityCompressionSignificance.EstablishedFact }
+                }).observationId == "disposable",
+                "retention selected an established fact instead of an explicitly disposable observation");
+        }
+
+        private static void MaterializationObservationConsistencyContracts()
+        {
+            RealityRegionId region = RealityRegionId.Surface(702);
+            var world = new DeferredRealityWorldComponent(null);
+            world.EnsureRegion(region, "observation-consistency", 0);
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "rumor-herd",
+                regionId = region.ToString(),
+                subjectId = "herd:muffalo",
+                spatialPrecision = RealityObservationPrecision.Rumor,
+                confidence = 0.2f,
+                estimate = "muffalo are somewhere in the region"
+            }), "rumor observation was not accepted");
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "habitat-herd",
+                regionId = region.ToString(),
+                subjectId = "herd:muffalo",
+                spatialPrecision = RealityObservationPrecision.Habitat,
+                confidence = 0.65f,
+                location = new RealityLocation { areaId = "valley", precision = RealityObservationPrecision.Habitat },
+                estimate = "muffalo use the valley habitat"
+            }), "habitat observation was not accepted");
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "area-pollution",
+                regionId = region.ToString(),
+                subjectId = "pollution",
+                spatialPrecision = RealityObservationPrecision.Area,
+                confidence = 0.8f,
+                location = new RealityLocation { areaId = "northwest", precision = RealityObservationPrecision.Area },
+                estimate = "pollution is in the northwest"
+            }), "area observation was not accepted");
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "exact-entrance",
+                regionId = region.ToString(),
+                subjectId = "ruin:entrance",
+                facet = "entrance",
+                playerObserved = true,
+                spatialPrecision = RealityObservationPrecision.Exact,
+                confidence = 1f,
+                location = new RealityLocation { x = 3, z = 7, precision = RealityObservationPrecision.Exact },
+                estimate = "the discovered entrance is here"
+            }), "exact observation was not accepted");
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "invalidated-entrance",
+                regionId = region.ToString(),
+                subjectId = "ruin:entrance",
+                spatialPrecision = RealityObservationPrecision.Exact,
+                confidence = 1f,
+                lifecycle = RealityObservationLifecycle.Invalidated,
+                location = new RealityLocation { x = 99, z = 99, precision = RealityObservationPrecision.Exact }
+            }), "invalidated observation was not accepted");
+
+            RealityMaterializationRequest request = new RealityMaterializationRequest
+            {
+                regionId = region,
+                providerId = "wildlife",
+                now = 100,
+                preserveObservedFacts = true
+            };
+            RealityMaterializationConsistencyPlan first = RealityMaterializationConsistency.Build(world, request);
+            RealityMaterializationConsistencyPlan second = RealityMaterializationConsistency.Build(world, request);
+            Require(first != null && first.Observations.Count == 4 && first.Observations.All(item =>
+                    item.lifecycle == RealityObservationLifecycle.Active),
+                "active observations were not separated from invalidated knowledge");
+            RealityMaterializationConstraint rumor = first.MaterializationConstraints.Single(item =>
+                item.sourceObservationId == "rumor-herd");
+            RealityMaterializationConstraint habitat = first.MaterializationConstraints.Single(item =>
+                item.sourceObservationId == "habitat-herd");
+            RealityMaterializationConstraint area = first.MaterializationConstraints.Single(item =>
+                item.sourceObservationId == "area-pollution");
+            RealityMaterializationConstraint exact = first.MaterializationConstraints.Single(item =>
+                item.sourceObservationId == "exact-entrance");
+            Require(rumor.enforcement == RealityMaterializationConstraintEnforcement.Advisory &&
+                rumor.location.x < 0 && string.IsNullOrEmpty(rumor.location.areaId),
+                "a rumor was incorrectly promoted to a fixed location");
+            Require(habitat.enforcement == RealityMaterializationConstraintEnforcement.Advisory &&
+                habitat.location.areaId == "valley",
+                "habitat knowledge did not retain its coarse area");
+            Require(area.enforcement == RealityMaterializationConstraintEnforcement.Required &&
+                area.location.areaId == "northwest",
+                "area knowledge did not become a required coarse obligation");
+            Require(exact.enforcement == RealityMaterializationConstraintEnforcement.Exact &&
+                exact.location.x == 3 && exact.location.z == 7,
+                "a high-confidence player exact observation did not constrain placement");
+
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "exact-default-location-precision",
+                regionId = region.ToString(),
+                subjectId = "ruin:beacon",
+                playerObserved = true,
+                spatialPrecision = RealityObservationPrecision.Exact,
+                confidence = 1f,
+                location = new RealityLocation { x = 5, z = 9 },
+                estimate = "the beacon is at this cell"
+            }), "an observation with an implicit location precision was not accepted");
+            RealityMaterializationConstraint normalized = RealityMaterializationConsistency.Build(world, request)
+                .MaterializationConstraints.Single(item => item.sourceObservationId == "exact-default-location-precision");
+            Require(normalized.location.precision == RealityObservationPrecision.Exact,
+                "observation location precision was not normalized to its stated precision");
+            Require(first.DeterministicStateKey == second.DeterministicStateKey &&
+                first.DeterministicSeed == second.DeterministicSeed,
+                "materialization consistency inputs were not deterministic");
+
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "invalidated-through-api",
+                regionId = region.ToString(),
+                subjectId = "temporary-sign",
+                spatialPrecision = RealityObservationPrecision.Area,
+                location = new RealityLocation { areaId = "old-clearing" }
+            }), "an observation for explicit invalidation was not accepted");
+            Require(world.InvalidateObservation("invalidated-through-api", "gameplay removed the sign"),
+                "explicit observation invalidation failed");
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "superseded-observation",
+                regionId = region.ToString(),
+                subjectId = "temporary-trail",
+                spatialPrecision = RealityObservationPrecision.Area,
+                location = new RealityLocation { areaId = "old-trail" }
+            }) && world.AddObservation(new RealityObservationInput
+            {
+                observationId = "superseding-observation",
+                regionId = region.ToString(),
+                subjectId = "temporary-trail",
+                spatialPrecision = RealityObservationPrecision.Area,
+                location = new RealityLocation { areaId = "new-trail" }
+            }), "observations for explicit supersession were not accepted");
+            Require(world.SupersedeObservation("superseded-observation", "superseding-observation", "trail moved"),
+                "explicit observation supersession failed");
+            RealityMaterializationConsistencyPlan lifecyclePlan = RealityMaterializationConsistency.Build(world, request);
+            Require(!lifecyclePlan.Observations.Any(item => item.observationId == "invalidated-through-api") &&
+                !lifecyclePlan.Observations.Any(item => item.observationId == "superseded-observation") &&
+                lifecyclePlan.Observations.Any(item => item.observationId == "superseding-observation"),
+                "invalidated or superseded observations still constrained rematerialization");
+
+            Require(world.AddObservation(new RealityObservationInput
+            {
+                observationId = "exact-entrance-conflict",
+                regionId = region.ToString(),
+                subjectId = "ruin:entrance",
+                facet = "entrance",
+                playerObserved = true,
+                spatialPrecision = RealityObservationPrecision.Exact,
+                confidence = 1f,
+                location = new RealityLocation { x = 4, z = 8, precision = RealityObservationPrecision.Exact },
+                estimate = "the entrance is elsewhere"
+            }), "conflicting exact observation was not accepted as knowledge");
+            RealityMaterializationConsistencyPlan conflicted = RealityMaterializationConsistency.Build(world, request);
+            Require(conflicted.Conflicts.Any(item => item.domainKey == "observation:ruin:entrance"),
+                "conflicting established observations were not diagnosable");
+        }
+
+        private static void FidelityContractsAndEscalationTypes()
+        {
+            var policy = new RealityProcessFidelityPolicy
+            {
+                legalFidelities = RealityFidelityMask.Statistical | RealityFidelityMask.Narrative,
+                runsWhileLiveProjection = false,
+                mayRequestEscalation = true,
+                escalationTarget = RealityFidelity.Narrative
+            };
+            Require(policy.IsLegalAt(RealityFidelity.Statistical) && !policy.IsLegalAt(RealityFidelity.Dormant) &&
+                !policy.runsWhileLiveProjection && policy.mayRequestEscalation,
+                "process fidelity policy did not express legality and live-map gating");
+            var contract = new RealityFidelityContract
+            {
+                supportedFidelities = RealityFidelityMask.All,
+                transitions = new List<RealityFidelityTransitionRule>
+                {
+                    new RealityFidelityTransitionRule
+                    {
+                        fromFidelity = RealityFidelity.Statistical,
+                        toFidelity = RealityFidelity.Narrative
+                    }
+                }
+            };
+            Require(contract.Supports(RealityFidelity.Narrative) &&
+                contract.AllowsTransition(RealityFidelity.Statistical, RealityFidelity.Narrative),
+                "provider fidelity transition contract did not retain its typed edge");
+            Require(!contract.AllowsTransition(RealityFidelity.Statistical, RealityFidelity.Narrative,
+                    RealityFidelityTransitionMechanism.Materialization),
+                "a materialization edge was confused with a latent transition");
+            var downgradeContract = new RealityFidelityContract
+            {
+                supportedFidelities = RealityFidelityMask.Statistical | RealityFidelityMask.Narrative,
+                transitions = new List<RealityFidelityTransitionRule>
+                {
+                    new RealityFidelityTransitionRule
+                    {
+                        fromFidelity = RealityFidelity.Narrative,
+                        toFidelity = RealityFidelity.Statistical
+                    }
+                }
+            };
+            Require(downgradeContract.AllowsTransition(RealityFidelity.Narrative, RealityFidelity.Statistical),
+                "provider fidelity contract could not declare a lower latent transition");
+            var livePolicy = new RealityProcessFidelityPolicy
+            {
+                legalFidelities = RealityFidelityMask.Materialized,
+                runsWhileLiveProjection = true
+            };
+            Require(livePolicy.IsLegalAt(RealityFidelity.Materialized) && livePolicy.runsWhileLiveProjection,
+                "a process policy could not explicitly opt into safe live-projection execution");
+            var pausedProcess = new RealityProcessRecord { processId = "escalation", providerId = "wildlife" };
+            RealityProcessPausePolicy.SetFidelityEscalation(pausedProcess, "fidelity:test", "needs detail");
+            Require(pausedProcess.paused && pausedProcess.pauseReason == RealityProcessPauseReason.FidelityEscalation &&
+                pausedProcess.pendingEscalationRequestId == "fidelity:test",
+                "fidelity escalation did not durably own the process pause");
+            Require(RealityProcessPausePolicy.Resume(pausedProcess, 20) && !pausedProcess.paused &&
+                pausedProcess.pendingEscalationRequestId == null,
+                "resuming an escalation-paused process did not clear its durable link");
+            var escalation = new RealityProcessEscalationRequest
+            {
+                requestedFidelity = RealityFidelity.Materialized,
+                reason = RealityFidelityEscalationReason.PlayerInteraction,
+                disposition = RealityFidelityEscalationDisposition.Request,
+                policy = RealityFidelityEscalationPolicy.HostApproval,
+                subjectId = "pawn-load-id"
+            };
+            Require(escalation.IsValid, "typed escalation request was not valid");
+            var result = new RealityProcessResult { escalation = escalation };
+            Require(result.escalation != null && result.escalation.reason == RealityFidelityEscalationReason.PlayerInteraction,
+                "process result did not carry a typed escalation request");
+            var registration = new RealityProviderRegistration();
+            Require((registration.supportedFidelities & RealityFidelityMask.Materialized) != 0,
+                "provider registration did not expose fidelity support");
+        }
+
+        private static void SimpleProviderCompositionContracts()
+        {
+            int executions = 0;
+            SimpleRealityProvider provider = new SimpleRealityProviderBuilder("pure.simple-provider", "Pure simple provider")
+                .Configure(registration =>
+                {
+                    registration.order = 901;
+                    registration.defaultFidelity = RealityFidelity.Statistical;
+                })
+                .WithFidelity(RealityFidelityMask.Statistical | RealityFidelityMask.Narrative)
+                .AllowTransition(RealityFidelity.Statistical, RealityFidelity.Narrative)
+                .WithAnalyticalProcess(
+                    (process, execution, vetoes) => true,
+                    (process, execution) =>
+                    {
+                        executions++;
+                        return new RealityProcessResult { succeeded = true };
+                    },
+                    RealityFidelityMask.Statistical,
+                    runsWhileLiveProjection: false)
+                .WithPopulations(new SimplePopulationDefinition
+                {
+                    canChange = (population, operation, vetoes) => true
+                })
+                .Build();
+
+            Require(provider.Registration.providerId == "pure.simple-provider" &&
+                (provider.Registration.capabilities & RealityProviderCapability.Processes) != 0 &&
+                (provider.Registration.capabilities & RealityProviderCapability.Populations) != 0,
+                "simple provider composition did not advertise configured capabilities");
+            Require(provider.ProvidesCapability(typeof(IRealityFidelityProvider)) &&
+                provider.ProvidesCapability(typeof(IRealityProcessProvider)) &&
+                provider.ProvidesCapability(typeof(IPopulationProvider)) &&
+                !provider.ProvidesCapability(typeof(IMaterializationProvider)),
+                "simple provider exposed an absent optional capability");
+            Require(RealityProviderRegistry.Register(provider), "simple provider did not register");
+            bool hasFidelity = RealityProviderRegistry.TryGetCapability("pure.simple-provider", out IRealityFidelityProvider fidelityProvider);
+            bool hasProcess = RealityProviderRegistry.TryGetCapability("pure.simple-provider", out IRealityProcessProvider processProvider);
+            bool hasPopulation = RealityProviderRegistry.TryGetCapability("pure.simple-provider", out IPopulationProvider populationProvider);
+            bool hasMaterialization = RealityProviderRegistry.TryGetCapability("pure.simple-provider", out IMaterializationProvider materializationProvider);
+            var transitionVetoes = new List<RealityVeto>();
+            Require(hasFidelity && hasProcess && hasPopulation && !hasMaterialization &&
+                fidelityProvider.DescribeFidelity(null, null).Supports(RealityFidelity.Narrative) &&
+                fidelityProvider.CanTransitionFidelity(new RealityFidelityTransitionRequest
+                {
+                    providerId = "pure.simple-provider",
+                    regionId = RealityRegionId.Surface(901),
+                    fromFidelity = RealityFidelity.Statistical,
+                    toFidelity = RealityFidelity.Narrative
+                }, transitionVetoes),
+                "capability-aware registry lookup did not honor simple composition");
+
+            var process = new RealityProcessRecord
+            {
+                providerId = "pure.simple-provider",
+                processId = "pure-process",
+                regionId = RealityRegionId.Surface(901).ToString()
+            };
+            Require(processProvider.CanExecute(process, new RealityProcessExecution(), new List<RealityVeto>()) &&
+                processProvider.Execute(process, new RealityProcessExecution()).succeeded && executions == 1,
+                "simple process callback was not delegated");
+            Require(populationProvider.CanChangePopulation(new RealityPopulationRecord
+            {
+                providerId = "pure.simple-provider"
+            }, "release", new List<RealityVeto>()), "simple population callback was not delegated");
+        }
+
         private static void RetentionSelection()
         {
             var journals = new List<RealityTransferJournalRecord>
@@ -188,28 +673,25 @@ namespace DeferredReality.PureTests
                 providerId = "retention", operationRetentionTicks = 100,
                 compactableOperationKinds = new List<string> { "safe" }
             };
-            Require(!RealityRetentionPolicy.CanExpireOperation(registration, "safe", 100, 200),
-                "operation age alone authorized expiry");
-            Require(!RealityRetentionPolicy.CanExpireOperation(registration, "unknown", 1, 1000), "unknown operation domain expired");
             var first = new RealityObservationRecord { observationId = "z", tick = 4 };
             var second = new RealityObservationRecord { observationId = "a", tick = 4 };
             Require(ReferenceEquals(RealityRetentionPolicy.FindOldestObservation(new[] { first, second }), second),
                 "observation eviction did not use a linear deterministic minimum");
         }
 
-        private static void SaveCompatibleDefaults()
+        private static void DefaultStateContracts()
         {
-            var oldProcess = new RealityProcessRecord { paused = true };
-            Require(oldProcess.pauseReason == RealityProcessPauseReason.None && oldProcess.cancelledTick == -1,
-                "new save fields lack compatible defaults");
-            RealityProcessPausePolicy.Normalize(oldProcess, true);
-            Require(oldProcess.pauseReason == RealityProcessPauseReason.Manual, "legacy paused process was not repaired as manual");
+            var pausedProcess = new RealityProcessRecord { paused = true };
+            Require(pausedProcess.pauseReason == RealityProcessPauseReason.None && pausedProcess.cancelledTick == -1,
+                "process defaults are not stable");
+            RealityProcessPausePolicy.Normalize(pausedProcess, true);
+            Require(pausedProcess.pauseReason == RealityProcessPauseReason.Manual, "an unspecified pause was not normalized to manual");
             var registration = new RealityProviderRegistration();
             Require(registration.operationRetentionTicks == -1 && registration.cancelledProcessRetentionTicks == -1,
                 "retention metadata default is not durable");
             var oldConstraint = new RealityConstraint();
             Require(oldConstraint.conflictDomainKeys != null && oldConstraint.conflictFacetKeys != null,
-                "constraint conflict-key defaults are not save-compatible");
+                "constraint conflict-key defaults are not stable");
         }
 
         private static void AdjacentPolicyBoundaries()
@@ -242,9 +724,9 @@ namespace DeferredReality.PureTests
                 "active excursion did not block map eviction");
             var marker = new RealityAdjacentMapRecord();
             Require(marker.lifecycle == RealityAdjacentMapLifecycle.Materializing,
-                "adjacent map marker did not have a save-compatible lifecycle default");
+                "adjacent map marker did not have a stable lifecycle default");
             Require(new RealityExcursionTicket().status == RealityExcursionStatus.Active,
-                "excursion ticket did not have a save-compatible active default");
+                "excursion ticket did not have a stable active default");
             Require(RealityAdjacentPolicy.IsSafeIdleJob(null, false, false, false, false, false, false, false) &&
                 RealityAdjacentPolicy.IsSafeIdleJob("Wait_Wander", true, false, false, false, false, false, false),
                 "safe idle classification rejected a no-job or wait state");
@@ -483,9 +965,9 @@ namespace DeferredReality.PureTests
             Require(RealityRetentionPolicy.CanExpireOperation(registration, operation, new[] { cursor }, 300),
                 "a proven sequence cursor did not permit safe marker expiry");
             Require(!RealityRetentionPolicy.CanExpireOperation(registration,
-                    new RealityAppliedOperation { operationId = "legacy", providerId = "retention", kind = "demography",
+                    new RealityAppliedOperation { operationId = "operation-id-only", providerId = "retention", kind = "demography",
                         domainId = "population:1", sequence = -1, tick = 100 }, new[] { cursor }, 300),
-                "a legacy operation-ID marker was compacted by a sequence cursor");
+                "an operation-ID-only marker was compacted by a sequence cursor");
             var oldSaveCursor = new RealityOperationRetentionWatermark();
             Require(oldSaveCursor.sequenceCursor == -1 && !oldSaveCursor.sequenceMode,
                 "old operation watermark defaults were not durable");
@@ -593,30 +1075,28 @@ namespace DeferredReality.PureTests
                     regionId = departed.regionId, conflictDomainKeys = new List<string>(departed.conflictDomainKeys),
                     conflictFacetKeys = new List<string>(departed.conflictFacetKeys), payload = departed.payload }),
                 "identical constraint facts conflicted");
-            var legacyNorth = new RealityConstraint
+            var implicitNorth = new RealityConstraint
             {
                 providerId = "provider", typeId = "status", regionId = "surface:7",
                 affectedAnchorIds = new List<string> { "pawn-1" }, conflictFacetKeys = new List<string> { "departed:north" }, payload = "north"
             };
-            var legacyInjury = new RealityConstraint
+            var implicitInjury = new RealityConstraint
             {
                 providerId = "provider", typeId = "status", regionId = "surface:7",
                 affectedAnchorIds = new List<string> { "pawn-1" }, conflictFacetKeys = new List<string> { "injured" }, payload = "injured"
             };
-            Require(RealityConstraintService.ConflictDomainsIntersect(legacyNorth, legacyInjury) &&
-                !RealityConstraintService.AreSemanticallyIncompatible(legacyNorth, legacyInjury),
-                "legacy subject fallback did not permit independent facets");
+            Require(RealityConstraintService.ConflictDomainsIntersect(implicitNorth, implicitInjury) &&
+                !RealityConstraintService.AreSemanticallyIncompatible(implicitNorth, implicitInjury),
+                "implicit subject domain did not permit independent facets");
         }
 
         private static void DuplicateRepairSemantics()
         {
-            Require(!RealityRepairPolicy.ShouldReplaceDuplicate(1, 1, null, null),
+            Require(!RealityRepairPolicy.ShouldReplaceDuplicate(null, null),
                 "duplicate repair did not retain the first serialized slot");
-            Require(RealityRepairPolicy.ShouldReplaceDuplicate(1, 2, null, null),
-                "newer schema did not replace an older duplicate");
-            Require(RealityRepairPolicy.ShouldReplaceDuplicate(1, 1, 10, 11),
+            Require(RealityRepairPolicy.ShouldReplaceDuplicate(10, 11),
                 "newer update tick did not replace an older duplicate");
-            Require(!RealityRepairPolicy.ShouldReplaceDuplicate(1, 1, 11, 10),
+            Require(!RealityRepairPolicy.ShouldReplaceDuplicate(11, 10),
                 "older update tick replaced a newer duplicate");
         }
 

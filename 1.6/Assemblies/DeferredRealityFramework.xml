@@ -5,7 +5,13 @@
     </assembly>
     <members>
         <member name="T:DeferredReality.API.RealityProviderRegistration">
-            <summary>Versioned registration metadata for a provider.</summary>
+            <summary>Registration metadata for a provider.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityProviderRegistration.supportedFidelities">
+            <summary>Fidelities this provider can represent for its regions.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityProviderRegistration.defaultFidelity">
+            <summary>Fidelity used when a provider first establishes a latent region.</summary>
         </member>
         <member name="F:DeferredReality.API.RealityProviderRegistration.operationRetentionTicks">
             <summary>Retention window for explicitly safe exactly-once operation kinds; negative means durable forever.</summary>
@@ -61,6 +67,30 @@
         <member name="T:DeferredReality.API.IRegionDescriptorProvider">
             <summary>Provider that can describe or seed region descriptors.</summary>
         </member>
+        <member name="T:DeferredReality.API.RealityFidelityContract">
+            <summary>Provider-declared fidelity and transition contract for a region.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityTransitionRule">
+            <summary>One typed edge in a provider's fidelity state machine.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityProcessFidelityPolicy">
+            <summary>Process-specific declaration of legal fidelity and live-map behavior.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityTransitionRequest">
+            <summary>Typed input to a provider- or host-owned latent fidelity transition.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityTransitionResult">
+            <summary>Structured result from a latent fidelity transition attempt.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityProcessEscalationRequest">
+            <summary>Typed process output requesting more detail without creating a Map automatically.</summary>
+        </member>
+        <member name="T:DeferredReality.API.IRealityFidelityProvider">
+            <summary>Provider fidelity contract required by every analytical process provider.</summary>
+        </member>
+        <member name="M:DeferredReality.API.IRealityFidelityProvider.OnFidelityChanged(DeferredReality.API.RealityProviderContext,DeferredReality.API.RealityRegionSnapshot,DeferredReality.API.RealityFidelity,DeferredReality.API.RealityFidelity)">
+            <summary>Notifies the provider after a committed latent fidelity change so it can schedule only legal work.</summary>
+        </member>
         <member name="T:DeferredReality.API.IRealityProcessProvider">
             <summary>Provider that executes analytical scheduled processes.</summary>
         </member>
@@ -83,7 +113,7 @@
             <summary>Optional materialization extension that receives the stages that actually began.</summary>
         </member>
         <member name="T:DeferredReality.API.ITransactionalAnchorProvider">
-            <summary>Optional transactional anchor owner. Legacy anchor callbacks remain supported as final commit notifications.</summary>
+            <summary>Optional transactional anchor owner.</summary>
         </member>
         <member name="T:DeferredReality.API.ITransactionalAnchorCommitProvider">
             <summary>Optional cleanup hook after a transactional anchor reaches commit.</summary>
@@ -106,11 +136,38 @@
         <member name="T:DeferredReality.API.IRealityDiagnosticsProvider">
             <summary>Provider hook for adding cached diagnostic rows.</summary>
         </member>
-        <member name="T:DeferredReality.API.IRealityMigrationHandler">
-            <summary>Idempotent provider migration hook for schema upgrades and legacy imports.</summary>
-        </member>
         <member name="T:DeferredReality.API.IRealityMapFactory">
             <summary>Optional host supplied map factory. The framework never invents a Map implementation.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityMaterializationConstraint">
+            <summary>Provider-defined translation of an established observation or constraint into map obligations.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityMaterializationConsistency">
+            <summary>Builds the deterministic, provider-neutral consistency input without creating a Map.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityMaterializationConsistencyConflict">
+            <summary>Explicit conflict between provider-derived rematerialization obligations.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityMaterializationConsistencyPlan">
+            <summary>
+            Deterministic, side-effect-free input supplied to map factories and providers.
+            Observations are knowledge; translated constraints are the provider's materialization obligations.
+            </summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityMaterializationConsistencyPlan.BuildDefaultConstraints">
+            <summary>
+            Adds the conservative framework translation. Providers may add richer obligations
+            from their own payloads, but the framework never turns a rumor into an exact claim.
+            </summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityMaterializationConsistencyPlan.AddConstraint(DeferredReality.API.RealityMaterializationConstraint)">
+            <summary>Adds one provider translation, retaining deterministic first-writer semantics.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityMaterializationConsistencyContext">
+            <summary>Read-only provider input for translating knowledge into spatial obligations.</summary>
+        </member>
+        <member name="T:DeferredReality.API.IRealityMaterializationConsistencyProvider">
+            <summary>Optional provider translation/validation layer for rematerialization consistency.</summary>
         </member>
         <member name="T:DeferredReality.API.IAdjacentRegionTransferHost">
             <summary>Optional host for safe pawn/group transfer between already materialized adjacent maps.</summary>
@@ -163,6 +220,9 @@
         <member name="T:DeferredReality.API.RealityProcessResult">
             <summary>Result returned by an analytical process.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityProcessResult.escalation">
+            <summary>Optional typed request. The scheduler persists and gates it; it never auto-materializes.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityVeto">
             <summary>Read-only veto or diagnostic reason.</summary>
         </member>
@@ -172,6 +232,13 @@
         <member name="M:DeferredReality.API.RealityVeto.ToString">
             <inheritdoc />
         </member>
+        <member name="T:DeferredReality.API.RealityCompressionPreservation">
+            <summary>
+            Framework-level compression preservation checks. This validates the
+            representation boundary without serializing live Pawns, Things, jobs,
+            or other RimWorld object graphs.
+            </summary>
+        </member>
         <member name="T:DeferredReality.API.RealityMaterializationRequest">
             <summary>Requested materialization target.</summary>
         </member>
@@ -180,6 +247,9 @@
         </member>
         <member name="F:DeferredReality.API.RealityMaterializationRequest.targetAnchorId">
             <summary>Optional identity-bearing anchor selected for this materialization.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityMaterializationRequest.escalationRequestId">
+            <summary>Approved durable escalation being satisfied by this materialization.</summary>
         </member>
         <member name="F:DeferredReality.API.RealityMaterializationRequest.adjacentMap">
             <summary>Optional explicit role metadata applied after a host map is generated.</summary>
@@ -195,6 +265,12 @@
         </member>
         <member name="P:DeferredReality.API.RealityMaterializationPlan.TransactionId">
             <summary>Runtime materialization identity used by map factories and readiness callbacks.</summary>
+        </member>
+        <member name="P:DeferredReality.API.RealityMaterializationPlan.Consistency">
+            <summary>
+            Deterministic provider-neutral knowledge input for this projection. It contains
+            observations as knowledge and translated obligations as separate collections.
+            </summary>
         </member>
         <member name="P:DeferredReality.API.RealityMaterializationPlan.Steps">
             <summary>Provider and core plan steps.</summary>
@@ -293,19 +369,64 @@
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.API.RealityRegionDescriptor">
-            <summary>Persisted descriptor for a region independent of any active Map.</summary>
+            <summary>Persisted descriptor for durable latent state and its optional live projection binding.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityRegionDescriptor.projectionMapUniqueId">
+            <summary>Runtime/persisted binding to the current Map projection. It is never region identity.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityRegionDescriptor.ExposeData">
             <inheritdoc />
         </member>
-        <member name="T:DeferredReality.API.RealityTopologyLink">
-            <summary>Stable link between two regions. Links do not require both endpoints to be materialized.</summary>
+        <member name="T:DeferredReality.API.RealityRegionConnection">
+            <summary>
+            Persisted provider-neutral topology between two durable regions. A connection describes eligibility and
+            metadata only; it does not perform a transfer, materialization, or state mutation across the edge.
+            </summary>
         </member>
-        <member name="M:DeferredReality.API.RealityTopologyLink.ExposeData">
+        <member name="F:DeferredReality.API.RealityRegionConnection.identityKey">
+            <summary>Provider-defined stable discriminator when several connections share the same semantic kind.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityRegionConnection.ownerNamespace">
+            <summary>Provider namespace/owner. Missing providers do not make this opaque record disposable.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityRegionConnection.providerPayload">
+            <summary>Opaque provider-defined connection semantics; the framework never parses this value.</summary>
+        </member>
+        <member name="P:DeferredReality.API.RealityRegionConnection.IsBidirectional">
+            <summary>Whether the connection can be traversed in either direction.</summary>
+        </member>
+        <member name="P:DeferredReality.API.RealityRegionConnection.IsEnabled">
+            <summary>Whether normal graph queries should return this connection.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRegionConnection.StableId(DeferredReality.API.RealityRegionId,DeferredReality.API.RealityRegionId,DeferredReality.API.RealityRegionConnectionDirection,System.String,System.String,System.String)">
+            <summary>Builds the canonical deterministic ID for a connection identity.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRegionConnection.StableId(System.String,System.String,DeferredReality.API.RealityRegionConnectionDirection,System.String,System.String,System.String)">
+            <summary>Builds a canonical ID from already serialized region identities.</summary>
+        </member>
+        <member name="P:DeferredReality.API.RealityRegionConnection.HasStableIdentity">
+            <summary>Whether the persisted ID matches the canonical identity fields.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRegionConnection.IsOutgoingFrom(System.String)">
+            <summary>Returns true when this connection can be traversed from the supplied region.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRegionConnection.IsIncomingTo(System.String)">
+            <summary>Returns true when this connection can be entered at the supplied region.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRegionConnection.TryGetDestinationRegionId(System.String,System.String@)">
+            <summary>Gets the traversal destination when leaving a supplied endpoint.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRegionConnection.TryGetOtherRegionId(System.String,System.String@)">
+            <summary>Gets the opposite endpoint regardless of direction, for neighborhood inspection.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityRegionConnection.ExposeData">
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.API.RealityPopulationRecord">
             <summary>Generic aggregate population record.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityPopulationRecord.compressionSignificance">
+            <summary>Population is fungible quantity; individual members belong in anchors.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityPopulationRecord.ExposeData">
             <inheritdoc />
@@ -319,11 +440,20 @@
         <member name="T:DeferredReality.API.RealityAnchorRecord">
             <summary>Identity-bearing object that must not be replaced by anonymous population detail.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityAnchorRecord.compressionSignificance">
+            <summary>Anchors retain identity across abstraction and projection changes.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityAnchorRecord.externalReferenceState">
+            <summary>Non-empty load IDs require an explicit provider resolution before compression.</summary>
+        </member>
         <member name="M:DeferredReality.API.RealityAnchorRecord.ExposeData">
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.API.RealityConstraint">
             <summary>Deferred fact that future resolution or materialization must honor.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityConstraint.compressionSignificance">
+            <summary>Constraints are established facts unless a provider explicitly vetoes their use.</summary>
         </member>
         <member name="F:DeferredReality.API.RealityConstraint.conflictDomainKeys">
             <summary>Explicit scopes in which incompatible constraints may conflict.</summary>
@@ -341,30 +471,33 @@
             <summary>Persisted scheduled process. Providers receive elapsed time analytically.</summary>
         </member>
         <member name="F:DeferredReality.API.RealityProcessRecord.pauseReason">
-            <summary>Persisted pause cause; old saves default to None and are repaired deterministically.</summary>
+            <summary>Persisted pause cause; an unspecified cause is normalized deterministically.</summary>
         </member>
         <member name="F:DeferredReality.API.RealityProcessRecord.cancelledTick">
             <summary>Tick at which cancellation became terminal, or -1 when unknown.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityProcessRecord.pendingEscalationRequestId">
+            <summary>Durable link to the escalation that currently owns this process's pause.</summary>
+        </member>
         <member name="M:DeferredReality.API.RealityProcessRecord.ExposeData">
+            <inheritdoc />
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityEscalationRecord">
+            <summary>Durable, typed request for a process to run at a higher fidelity.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityFidelityEscalationRecord.ExposeData">
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.API.RealityObservationRecord">
             <summary>Observation record. It never mutates the objective population value.</summary>
         </member>
+        <member name="F:DeferredReality.API.RealityObservationRecord.compressionSignificance">
+            <summary>Established observations constrain rematerialization; disposable observations may age out.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityObservationRecord.location">
+            <summary>Structured knowledge location; it is not objective state and may be absent at coarse precision.</summary>
+        </member>
         <member name="M:DeferredReality.API.RealityObservationRecord.ExposeData">
-            <inheritdoc />
-        </member>
-        <member name="T:DeferredReality.API.RealityMapAlias">
-            <summary>Legacy map alias retained so a map ID can be migrated without making it a region identity.</summary>
-        </member>
-        <member name="M:DeferredReality.API.RealityMapAlias.ExposeData">
-            <inheritdoc />
-        </member>
-        <member name="T:DeferredReality.API.RealityMigrationMarker">
-            <summary>Idempotent provider migration marker.</summary>
-        </member>
-        <member name="M:DeferredReality.API.RealityMigrationMarker.ExposeData">
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.API.RealityAppliedOperation">
@@ -374,7 +507,7 @@
             <summary>Optional provider-defined replay domain; null keeps the marker durable.</summary>
         </member>
         <member name="F:DeferredReality.API.RealityAppliedOperation.sequence">
-            <summary>Provider/domain sequence. Negative means legacy operation-ID-only durability.</summary>
+            <summary>Provider/domain sequence. Negative means operation-ID-only durability.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityAppliedOperation.ExposeData">
             <inheritdoc />
@@ -422,19 +555,19 @@
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.API.RealityRegionMappingService">
-            <summary>Public mapping facade separating active Map references from durable region identities.</summary>
+            <summary>Public mapping facade separating live Map projections from durable region identities.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityRegionMappingService.ForMap(Verse.Map)">
-            <summary>Maps an active Map to a stable region, creating only its descriptor and alias.</summary>
+            <summary>Maps a live Map to a stable region and records only its projection binding.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityRegionMappingService.TryGetActiveMap(DeferredReality.API.RealityRegionId,Verse.Map@)">
-            <summary>Finds the currently materialized Map for a region without claiming one exists.</summary>
+            <summary>Finds the current live projection for a region without claiming one exists.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityRegionMappingService.Adjacent(DeferredReality.API.RealityRegionId,System.String)">
-            <summary>Returns adjacent regions represented by persisted topology links.</summary>
+            <summary>Returns adjacent regions represented by enabled persisted connections.</summary>
         </member>
-        <member name="M:DeferredReality.API.RealityRegionMappingService.TryFromLegacyMapId(System.Int32,DeferredReality.API.RealityRegionId@)">
-            <summary>Resolves a legacy Map.uniqueID alias after migration.</summary>
+        <member name="M:DeferredReality.API.RealityRegionMappingService.TryFromProjectionMapId(System.Int32,DeferredReality.API.RealityRegionId@)">
+            <summary>Resolves a live projection binding by Map.uniqueID.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityRetentionPolicy">
             <summary>Pure retention decisions. Unknown or unlisted domains are retained for safety.</summary>
@@ -451,6 +584,9 @@
         <member name="M:DeferredReality.API.RealityRetentionPolicy.FindOldestObservation(System.Collections.Generic.IEnumerable{DeferredReality.API.RealityObservationRecord})">
             <summary>Finds the deterministic oldest observation without sorting the full history.</summary>
         </member>
+        <member name="M:DeferredReality.API.RealityRetentionPolicy.FindOldestDiscardableObservation(System.Collections.Generic.IEnumerable{DeferredReality.API.RealityObservationRecord})">
+            <summary>Finds the oldest observation that explicitly permits disappearance.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityCompactionReport">
             <summary>Counts the records removed by one conservative storage compaction pass.</summary>
         </member>
@@ -458,13 +594,70 @@
             <summary>Logical space occupied by a region. Custom layers use <see cref="F:DeferredReality.API.RealityRegionId.CustomLayer"/>.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityFidelity">
-            <summary>Simulation fidelity. Observation is stored independently on the region.</summary>
+            <summary>
+            Simulation fidelity. This is the resolution of the region's state, not its
+            ownership lifecycle; LiveProjection authority is tracked separately.
+            </summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityCompressionSignificance">
+            <summary>
+            Declares what a record means when a live projection is compressed. The
+            framework never guesses an unsafe disposition; Unknown is a veto.
+            </summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityExternalReferenceState">
+            <summary>State of a provider-owned external object reference during compression.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityCompressionSignificanceRules">
+            <summary>Small, provider-neutral rules for compression significance.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityMask">
+            <summary>Fidelity values a provider or process can represent.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityTransitionMechanism">
+            <summary>Owner of a fidelity transition when no live Map is being created or removed.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityEscalationReason">
+            <summary>Typed cause for a process requesting a more detailed representation.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityEscalationDisposition">
+            <summary>Whether a provider is asking the host to resolve an escalation or declining it safely.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityEscalationStatus">
+            <summary>Durable state of a fidelity escalation request.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityEscalationPolicy">
+            <summary>Policy attached to a typed escalation request.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityRegionAuthority">
+            <summary>
+            Declares which representation owns a region's state and which projection transition is in flight.
+            Fidelity describes the resolution of latent state; it never describes whether a Map exists.
+            </summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityRegionConnectionDirection">
+            <summary>Traversal semantics for a persisted region connection.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityRegionConnectionLifecycle">
+            <summary>Lifecycle of a persisted region connection.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityObservationPrecision">
             <summary>Precision with which a fact is known or spatially protected.</summary>
         </member>
-        <member name="T:DeferredReality.API.RealityLifecycleState">
-            <summary>Lifecycle state of a persisted framework record.</summary>
+        <member name="T:DeferredReality.API.RealityObservationLifecycle">
+            <summary>Whether an observation remains eligible to constrain a future projection.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityMaterializationConstraintEnforcement">
+            <summary>How strongly a provider asks a map realization to honor a translated fact.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityObservationPrecisionRules">
+            <summary>Stable semantics for turning spatial knowledge into a rematerialization plan.</summary>
+        </member>
+        <member name="M:DeferredReality.API.RealityObservationPrecisionRules.DefaultEnforcement(DeferredReality.API.RealityObservationPrecision)">
+            <summary>Default guidance only; providers choose whether a fact is advisory or hard.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityPayloadLifecycle">
+            <summary>Lifecycle state of opaque provider payload data; region projection authority is separate.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityProcessKind">
             <summary>Categories understood by the framework scheduler.</summary>
@@ -495,6 +688,9 @@
         </member>
         <member name="T:DeferredReality.API.RealityMaterializationStage">
             <summary>Stages that may have begun during a materialization transaction.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityFidelityRules">
+            <summary>Small deterministic helpers for fidelity validation.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityDeterminism">
             <summary>Stable, deterministic identity helpers shared by all providers.</summary>
@@ -592,14 +788,56 @@
         <member name="M:DeferredReality.API.RealityThreadGuard.EstablishMainThread">
             <summary>Registers the current thread from an explicit RimWorld startup lifecycle point.</summary>
         </member>
-        <member name="M:DeferredReality.API.RealityThreadGuard.InitializeMainThread">
-            <summary>Backward-compatible explicit initializer. It is never called implicitly by a mutation.</summary>
-        </member>
         <member name="P:DeferredReality.API.RealityThreadGuard.IsMainThread">
             <summary>Whether the current caller is the registered main thread.</summary>
         </member>
         <member name="M:DeferredReality.API.RealityThreadGuard.RequireMainThread">
             <summary>Throws when a caller attempts to mutate Verse state from a worker thread.</summary>
+        </member>
+        <member name="T:DeferredReality.API.IRealityCapabilitySource">
+            <summary>Internal registry hook used by compositional providers to advertise only configured capabilities.</summary>
+        </member>
+        <member name="T:DeferredReality.API.SimpleFidelityDefinition">
+            <summary>Small fidelity declaration for the common aggregate-provider path.</summary>
+        </member>
+        <member name="T:DeferredReality.API.SimpleProcessDefinition">
+            <summary>Typed analytical process callbacks; the scheduler still owns bounds, pause, and escalation persistence.</summary>
+        </member>
+        <member name="T:DeferredReality.API.SimplePopulationDefinition">
+            <summary>Typed aggregate population callbacks.</summary>
+        </member>
+        <member name="T:DeferredReality.API.SimpleAnchorDefinition">
+            <summary>Typed identity-anchor validation callback.</summary>
+        </member>
+        <member name="T:DeferredReality.API.SimpleConstraintDefinition">
+            <summary>Typed provider-constraint callbacks.</summary>
+        </member>
+        <member name="T:DeferredReality.API.SimpleRealityProviderBuilder">
+            <summary>
+            Composable provider registration for ordinary latent simulation. Optional services are absent unless
+            configured, while advanced transactional components can be attached without being registered separately.
+            </summary>
+        </member>
+        <member name="M:DeferredReality.API.SimpleRealityProviderBuilder.WithFidelity(DeferredReality.API.RealityFidelityMask)">
+            <summary>Starts a fidelity declaration without exposing transition-record construction.</summary>
+        </member>
+        <member name="M:DeferredReality.API.SimpleRealityProviderBuilder.AllowTransition(DeferredReality.API.RealityFidelity,DeferredReality.API.RealityFidelity,DeferredReality.API.RealityFidelityTransitionMechanism)">
+            <summary>Adds one legal fidelity edge to the simple provider's state machine.</summary>
+        </member>
+        <member name="M:DeferredReality.API.SimpleRealityProviderBuilder.ConfigureFidelity(System.Action{DeferredReality.API.SimpleFidelityDefinition})">
+            <summary>Applies the few provider-specific fidelity settings not covered by the fluent defaults.</summary>
+        </member>
+        <member name="M:DeferredReality.API.SimpleRealityProviderBuilder.WithAnalyticalProcess(System.Func{DeferredReality.API.RealityProcessRecord,DeferredReality.API.RealityProcessExecution,System.Collections.Generic.IList{DeferredReality.API.RealityVeto},System.Boolean},System.Func{DeferredReality.API.RealityProcessRecord,DeferredReality.API.RealityProcessExecution,DeferredReality.API.RealityProcessResult},DeferredReality.API.RealityFidelityMask,System.Boolean,System.Boolean,DeferredReality.API.RealityFidelity,DeferredReality.API.RealityFidelityEscalationPolicy)">
+            <summary>Configures the common bounded analytical-process contract in one call.</summary>
+        </member>
+        <member name="M:DeferredReality.API.SimpleRealityProviderBuilder.UseAdvanced(System.Object[])">
+            <summary>Attaches map, compression, transfer, excursion, or other advanced services to this registration.</summary>
+        </member>
+        <member name="T:DeferredReality.API.SimpleRealityProvider">
+            <summary>
+            Registered facade produced by <see cref="T:DeferredReality.API.SimpleRealityProviderBuilder"/>. It advertises only configured
+            services to the framework, so an absent optional service cannot silently become a successful no-op provider.
+            </summary>
         </member>
         <member name="T:DeferredReality.API.DeferredRealityWorldComponent">
             <summary>Authoritative world-level store for latent reality.</summary>
@@ -658,11 +896,32 @@
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ProviderPayloadSnapshots(System.String)">
             <summary>Returns detached provider payloads without exposing mutable storage.</summary>
         </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UpsertTopology(DeferredReality.API.RealityTopologyLink)">
-            <summary>Records or updates a topology link.</summary>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UpsertConnection(DeferredReality.API.RealityRegionConnection)">
+            <summary>Records or updates one explicit region connection.</summary>
         </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TopologySnapshots(System.String)">
-            <summary>Returns detached topology links optionally scoped to a region.</summary>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryGetConnection(System.String,DeferredReality.API.RealityRegionConnection@)">
+            <summary>Returns a detached persisted graph record by its canonical stable ID.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ConnectionSnapshots(System.String)">
+            <summary>Returns all detached connections, including disabled records, in stable ID order.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.OutgoingConnections(DeferredReality.API.RealityRegionId,System.String)">
+            <summary>Returns enabled connections traversable from a region.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.OutgoingConnections(System.String,System.String)">
+            <summary>Returns enabled connections traversable from a serialized region ID.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.IncomingConnections(DeferredReality.API.RealityRegionId,System.String)">
+            <summary>Returns enabled connections that can enter a region.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.IncomingConnections(System.String,System.String)">
+            <summary>Returns enabled connections that can enter a serialized region ID.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.Neighbors(DeferredReality.API.RealityRegionId,System.String)">
+            <summary>Returns unique enabled neighboring region identities without performing pathfinding.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.Neighbors(System.String,System.String)">
+            <summary>Returns unique enabled neighboring serialized region identities without pathfinding.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryGetPopulation(System.String,DeferredReality.API.RealityPopulationSnapshot@)">
             <summary>Returns a detached population record.</summary>
@@ -682,6 +941,24 @@
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ProcessSnapshots(System.String)">
             <summary>Returns detached scheduled processes.</summary>
         </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.FidelityEscalationSnapshots(System.String)">
+            <summary>Returns durable fidelity escalation requests in deterministic order.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryGetFidelityEscalation(System.String,DeferredReality.API.RealityFidelityEscalationRecord@)">
+            <summary>Reads one durable escalation request without exposing mutable store state.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ApproveFidelityEscalation(System.String,System.String)">
+            <summary>Approves a pending escalation without creating a Map or changing fidelity.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ResolveFidelityEscalation(System.String,DeferredReality.API.RealityFidelityEscalationStatus,System.String)">
+            <summary>Resolves an escalation after the host/provider has satisfied or declined its request.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryTransitionFidelity(DeferredReality.API.RealityFidelityTransitionRequest)">
+            <summary>
+            Performs a provider-validated latent fidelity transition. Materialized transitions belong to
+            the transactional map materialization/compression services and are never performed here.
+            </summary>
+        </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ObservationSnapshots(System.String,System.String)">
             <summary>Returns detached observations, newest first.</summary>
         </member>
@@ -697,36 +974,32 @@
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.ScheduleProcess(DeferredReality.API.RealityProcessRecord)">
             <summary>Schedules or updates one stable process.</summary>
         </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RequestFidelityEscalation(DeferredReality.API.RealityProcessRecord,DeferredReality.API.RealityProcessEscalationRequest,DeferredReality.API.RealityRegionSnapshot,System.Int64)">
+            <summary>Creates or reuses one durable escalation request for a process output.</summary>
+        </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UpdateProcessPayload(System.String,System.String)">
             <summary>Updates one process payload in place so a provider can persist an execution stage safely.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.AddObservation(DeferredReality.API.RealityObservationInput)">
             <summary>Records an observation without changing objective population data.</summary>
         </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.InvalidateObservation(System.String,System.String,System.Int64)">
+            <summary>Explicit gameplay invalidation of knowledge; invalidated facts no longer constrain rematerialization.</summary>
+        </member>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.SupersedeObservation(System.String,System.String,System.String,System.Int64)">
+            <summary>Explicit gameplay supersession of knowledge by a newer established fact.</summary>
+        </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RegisterMap(Verse.Map)">
-            <summary>Associates an active map with a stable region and stores only the map ID as a legacy alias/link.</summary>
+            <summary>Associates a live Map projection with a durable region identity.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.RegisterMap(Verse.Map,DeferredReality.API.RealityRegionId)">
-            <summary>Associates a map with an explicit stable region, preserving the legacy tile-based overload.</summary>
-        </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryMigrateMapIdentity(Verse.Map,DeferredReality.API.RealityRegionId,DeferredReality.API.RealityRegionId@)">
-            <summary>
-            Rebinds one legacy map alias to a provider-owned identity during an explicit migration.
-            Normal registration deliberately refuses alias remapping; this additive API is the
-            narrowly scoped escape hatch for providers correcting an older, persisted identity.
-            </summary>
-        </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryMigrateMapIdentity(Verse.Map,DeferredReality.API.RealityRegionId,DeferredReality.API.RealityRegionId@,System.String@)">
-            <summary>
-            Rebinds a legacy map alias and returns a bounded diagnostic when the migration is rejected.
-            The original overload remains the compatibility surface for callers that only need success.
-            </summary>
+            <summary>Associates a live Map projection with an explicit provider-owned region identity.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.UnregisterMap(Verse.Map)">
-            <summary>Releases the active-map link while preserving latent state for future materialization.</summary>
+            <summary>Releases the live projection binding while preserving latent state.</summary>
         </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryRegionForLegacyMap(System.Int32,DeferredReality.API.RealityRegionId@)">
-            <summary>Looks up the stable identity associated with a legacy map ID.</summary>
+        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.TryRegionForProjectionMapId(System.Int32,DeferredReality.API.RealityRegionId@)">
+            <summary>Looks up the stable region whose live projection owns a Map.uniqueID.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.HasAppliedOperation(System.String)">
             <summary>Returns whether a mutation operation has already been applied.</summary>
@@ -741,19 +1014,13 @@
             <summary>Publishes provider proof that a replay domain has advanced past a durable tick.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.DeclareExactlyOnceDomain(System.String,System.String,System.String,System.Boolean,System.String)">
-            <summary>Declares a provider/domain sequence cursor. Legacy tick proofs are never upgraded implicitly.</summary>
+            <summary>Declares a provider/domain sequence cursor. Tick history alone is never upgraded implicitly.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.AdvanceExactlyOnceCursor(System.String,System.String,System.String,System.Int64,System.String)">
             <summary>Advances a declared cursor only after its matching sequenced marker is durable.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.OperationWatermarkSnapshots(System.String)">
             <summary>Returns detached, deterministic provider replay-watermark records.</summary>
-        </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.IsMigrationCommitted(System.String,System.String,System.Int32)">
-            <summary>Returns whether a provider migration version is committed.</summary>
-        </member>
-        <member name="M:DeferredReality.API.DeferredRealityWorldComponent.CommitMigration(System.String,System.String,System.Int32,System.String)">
-            <summary>Commits an idempotent migration marker after provider validation.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.Quarantine(System.String,System.String,System.String,System.String,System.String)">
             <summary>Adds durable audit data for unsupported or corrupted records.</summary>
@@ -843,7 +1110,7 @@
             <summary>Records bounded adjacent diagnostics without making the monitor history unbounded.</summary>
         </member>
         <member name="M:DeferredReality.API.DeferredRealityWorldComponent.PreferDuplicate(System.Object,System.Object)">
-            <summary>Stable repair keeps the first serialized slot, replacing it only with an explicitly newer/versioned record.</summary>
+            <summary>Stable repair keeps the first serialized slot, replacing it only with an explicitly newer record.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityProviderRegistry">
             <summary>Capability-based provider registry. Internal collections are never exposed.</summary>
@@ -866,6 +1133,9 @@
         <member name="M:DeferredReality.API.RealityProviderRegistry.OfType``1">
             <summary>Returns providers implementing a capability interface in deterministic order.</summary>
         </member>
+        <member name="M:DeferredReality.API.RealityProviderRegistry.TryGetCapability``1(System.String,``0@)">
+            <summary>Resolves a configured capability without exposing optional facade methods as false providers.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityEventBus">
             <summary>Immutable lifecycle/domain event bus with disposal and provider isolation.</summary>
         </member>
@@ -874,6 +1144,25 @@
         </member>
         <member name="M:DeferredReality.API.RealityEventBus.Publish(DeferredReality.API.RealityEvent)">
             <summary>Publishes an event to a stable snapshot of subscribers.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityLatentRecordStore">
+            <summary>
+            Owns the durable records that describe latent reality. The world component remains the
+            RimWorld WorldComponent and calls this store from its ExposeData entry point.
+            </summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityProjectionRecordStore">
+            <summary>
+            Owns durable state for live projections and cross-region transitions. These records are
+            recovery state, not latent population or identity state.
+            </summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityRegionGraphStore">
+            <summary>
+            Owns the persisted region-topology records and their read indexes.
+            The world component remains the serialization and diagnostic owner; this store only
+            validates, indexes, and returns detached graph records.
+            </summary>
         </member>
         <member name="T:DeferredReality.Diagnostics.RealityDiagnosticsSnapshot">
             <summary>Immutable, cached summary used by UI and developer commands.</summary>
@@ -897,13 +1186,16 @@
             <summary>Runs an explicit audit; normal ticks do not call this method.</summary>
         </member>
         <member name="T:DeferredReality.Diagnostics.Window_DeferredRealityInspector">
-            <summary>Compact inspector for region, fidelity, topology, records, and audit state.</summary>
+            <summary>Compact inspector for region, fidelity, graph, records, and audit state.</summary>
         </member>
         <member name="M:DeferredReality.Diagnostics.Window_DeferredRealityInspector.DoWindowContents(UnityEngine.Rect)">
             <inheritdoc />
         </member>
         <member name="T:DeferredReality.Diagnostics.RealityDebugActions">
             <summary>Developer actions that exercise only explicit framework operations.</summary>
+        </member>
+        <member name="T:DeferredReality.Diagnostics.RealityProjectionDiagnostics">
+            <summary>Read-only diagnostics for temporary projections and their recovery policy.</summary>
         </member>
         <member name="T:DeferredReality.Materialization.RealityAdjacentConstructionGuards">
             <summary>Central construction predicate and defense-in-depth cleanup for marked adjacent maps.</summary>
@@ -918,58 +1210,10 @@
             <summary>Pure fallback classification: only no-job and explicit idle jobs are safe to return.</summary>
         </member>
         <member name="T:DeferredReality.Materialization.RealityAdjacentSurfaceService">
-            <summary>Opt-in experimental cardinal surface topology and safe transfer facade.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.RegisterTransferHost(DeferredReality.API.IAdjacentRegionTransferHost)">
-            <summary>Registers the host that owns group transfer implementation.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.RegisterTransferHost(System.String,DeferredReality.API.IAdjacentRegionTransferHost)">
-            <summary>Registers a transfer host under one provider namespace.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.EnsureCardinalNeighbors(Verse.Map)">
-            <summary>Creates stable cardinal neighbor descriptors and bidirectional links.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.TryTransfer(DeferredReality.API.RealityAdjacentTransferRequest)">
-            <summary>Attempts an explicitly prepared transfer; otherwise returns safe world-travel fallback.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.RecoverTransfer(DeferredReality.API.RealityAdjacentTransferRequest)">
-            <summary>Rolls back an interrupted transfer journal when its host can still locate the party.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.Warm(DeferredReality.API.RealityRegionId,Verse.Map)">
-            <summary>Stores a bounded warm-map reference without removing a Map.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.TrackWarm(Verse.Map,System.Int64)">
-            <summary>Tracks a loaded marked map without triggering eviction during map initialization.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.TryGetWarm(DeferredReality.API.RealityRegionId,Verse.Map@)">
-            <summary>Gets a warm map reference if it is still materialized.</summary>
+            <summary>Opt-in experimental cardinal surface connections and safe transfer facade.</summary>
         </member>
         <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.Monitor(DeferredReality.API.DeferredRealityWorldComponent,System.Int64)">
             <summary>Runs the bounded adjacent-map and excursion monitor. It is called at a coarse world interval.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.TryEvictWarmMaps(DeferredReality.API.DeferredRealityWorldComponent,System.Int64)">
-            <summary>Attempts all overdue warm-cache evictions and retains a diagnostic for each veto.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.AdjacentDiagnostics(DeferredReality.API.DeferredRealityWorldComponent)">
-            <summary>Returns stable diagnostics for marked maps and the last eviction vetoes.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityAdjacentSurfaceService.Forget(Verse.Map)">
-            <summary>Removes a deinitialized map from the runtime warm cache.</summary>
-        </member>
-        <member name="T:DeferredReality.Materialization.DeferredRealityModSettings">
-            <summary>Persisted opt-in setting for the experimental surface MVP.</summary>
-        </member>
-        <member name="P:DeferredReality.Materialization.DeferredRealityModSettings.Current">
-            <summary>Current settings instance.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.DeferredRealityModSettings.ExposeData">
-            <inheritdoc />
-        </member>
-        <member name="T:DeferredReality.Materialization.DeferredRealityMod">
-            <summary>Mod entry point for the framework setting only.</summary>
-        </member>
-        <member name="T:DeferredReality.Materialization.RealityAdjacentDebugActions">
-            <summary>Developer action for creating topology descriptors without changing travel behavior.</summary>
         </member>
         <member name="T:DeferredReality.Materialization.RealityMapCreationPolicy">
             <summary>Pure checks for transaction-scoped adjacent map classification.</summary>
@@ -979,6 +1223,53 @@
         </member>
         <member name="M:DeferredReality.Materialization.RealityMapIdentityPolicy.TrySelectClaim(System.Collections.Generic.IEnumerable{DeferredReality.API.RealityMapIdentityClaim},DeferredReality.API.RealityMapIdentityClaim@,System.String@)">
             <summary>Accepts one unambiguous provider claim and fails closed for conflicting owners.</summary>
+        </member>
+        <member name="T:DeferredReality.Materialization.DeferredRealityModSettings">
+            <summary>Persisted opt-in policy for temporary provider-owned projection sites.</summary>
+        </member>
+        <member name="P:DeferredReality.Materialization.DeferredRealityModSettings.Current">
+            <summary>Current settings instance.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.DeferredRealityModSettings.ExposeData">
+            <inheritdoc />
+        </member>
+        <member name="T:DeferredReality.Materialization.DeferredRealityMod">
+            <summary>Mod entry point for framework projection policy only.</summary>
+        </member>
+        <member name="T:DeferredReality.Materialization.RealityProjectionCacheService">
+            <summary>
+            Owns runtime references to temporary map projections and their bounded eviction diagnostics.
+            Persisted adjacent-map records remain owned by DeferredRealityWorldComponent.
+            </summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityProjectionCacheService.TrackWarm(Verse.Map,System.Int64)">
+            <summary>Tracks a loaded projection without triggering eviction during map initialization.</summary>
+        </member>
+        <member name="T:DeferredReality.Materialization.RealityRegionTopologyService">
+            <summary>
+            Projects engine topology into durable region connections. It does not create maps or move entities.
+            </summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityRegionTopologyService.EnsureCardinalNeighbors(Verse.Map)">
+            <summary>Creates stable cardinal neighbor descriptors and graph edges for a loaded surface map.</summary>
+        </member>
+        <member name="T:DeferredReality.Materialization.RealityRegionTopologyDebugActions">
+            <summary>Developer action for creating topology descriptors without changing travel behavior.</summary>
+        </member>
+        <member name="T:DeferredReality.Materialization.RealityRegionTransferService">
+            <summary>Transactional cross-region transfer service. Topology is queried elsewhere; this service changes ownership.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityRegionTransferService.RegisterTransferHost(System.String,DeferredReality.API.IAdjacentRegionTransferHost)">
+            <summary>Registers a transfer host under one provider namespace.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityRegionTransferService.TryTransfer(DeferredReality.API.RealityAdjacentTransferRequest)">
+            <summary>Attempts an explicitly prepared transfer; otherwise returns safe world-travel fallback.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityRegionTransferService.RecoverTransfer(DeferredReality.API.RealityAdjacentTransferRequest)">
+            <summary>Rolls back an interrupted transfer journal when its host can still locate the party.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityRegionTransferService.HasHost(System.String)">
+            <summary>Returns whether a provider-scoped transfer host is available for recovery or excursion work.</summary>
         </member>
         <member name="T:DeferredReality.Materialization.RealityTransitionPolicy">
             <summary>Pure transaction seams used to keep provider selection and compensation deterministic.</summary>
@@ -992,20 +1283,14 @@
         <member name="T:DeferredReality.Materialization.RealityMapFactoryRegistry">
             <summary>Host-provided factories for normal RimWorld map creation.</summary>
         </member>
-        <member name="P:DeferredReality.Materialization.RealityMapFactoryRegistry.Factory">
-            <summary>Optional legacy fallback factory. Null means framework-only planning is available.</summary>
-        </member>
         <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.Register(System.String,DeferredReality.API.IRealityMapFactory)">
-            <summary>Registers a factory for one provider namespace without taking the legacy fallback slot.</summary>
+            <summary>Registers a factory for one provider namespace.</summary>
         </member>
         <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.Unregister(System.String,DeferredReality.API.IRealityMapFactory)">
             <summary>Removes a provider-scoped factory if it is the registered instance.</summary>
         </member>
         <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.TryGet(System.String,DeferredReality.API.IRealityMapFactory@)">
-            <summary>Resolves a provider-scoped factory, then the legacy fallback.</summary>
-        </member>
-        <member name="M:DeferredReality.Materialization.RealityMapFactoryRegistry.TryGetScoped(System.String,DeferredReality.API.IRealityMapFactory@)">
-            <summary>Resolves only a provider-owned factory; adjacent sites must never use the legacy fallback.</summary>
+            <summary>Resolves only the factory owned by the requested provider.</summary>
         </member>
         <member name="T:DeferredReality.Materialization.RealityMaterializationService">
             <summary>Transactional materialization of latent regions.</summary>
@@ -1145,10 +1430,10 @@
         <member name="T:DeferredReality.Simulation.RealityRepairPolicy">
             <summary>Deterministic duplicate repair policy shared by save repair and pure tests.</summary>
         </member>
-        <member name="M:DeferredReality.Simulation.RealityRepairPolicy.ShouldReplaceDuplicate(System.Int32,System.Int32,System.Nullable{System.Int64},System.Nullable{System.Int64})">
+        <member name="M:DeferredReality.Simulation.RealityRepairPolicy.ShouldReplaceDuplicate(System.Nullable{System.Int64},System.Nullable{System.Int64})">
             <summary>
             The first serialized valid record keeps its list position. A candidate replaces its value only when an
-            explicit schema version or update tick proves it newer; otherwise serialized order is authoritative.
+            explicit update tick proves it newer; otherwise serialized order is authoritative.
             </summary>
         </member>
         <member name="T:DeferredReality.Testing.DeferredRealityInGameTestComponent">

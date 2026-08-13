@@ -17,13 +17,148 @@ namespace DeferredReality.API
         Custom
     }
 
-    /// <summary>Simulation fidelity. Observation is stored independently on the region.</summary>
+    /// <summary>
+    /// Simulation fidelity. This is the resolution of the region's state, not its
+    /// ownership lifecycle; LiveProjection authority is tracked separately.
+    /// </summary>
     public enum RealityFidelity
     {
         Dormant,
         Statistical,
         Narrative,
         Materialized
+    }
+
+    /// <summary>
+    /// Declares what a record means when a live projection is compressed. The
+    /// framework never guesses an unsafe disposition; Unknown is a veto.
+    /// </summary>
+    public enum RealityCompressionSignificance
+    {
+        Unknown,
+        Disposable,
+        Aggregate,
+        Identity,
+        EstablishedFact,
+        PlayerBound,
+        QuestBound,
+        UnsafeReference
+    }
+
+    /// <summary>State of a provider-owned external object reference during compression.</summary>
+    public enum RealityExternalReferenceState
+    {
+        None,
+        ProviderResolved,
+        Unknown,
+        PlayerControlled,
+        QuestCritical
+    }
+
+    /// <summary>Small, provider-neutral rules for compression significance.</summary>
+    public static class RealityCompressionSignificanceRules
+    {
+        public static bool IsDefined(RealityCompressionSignificance value) =>
+            System.Enum.IsDefined(typeof(RealityCompressionSignificance), value);
+
+        public static bool IsDefined(RealityExternalReferenceState value) =>
+            System.Enum.IsDefined(typeof(RealityExternalReferenceState), value);
+
+        public static bool IsVeto(RealityCompressionSignificance value) =>
+            value == RealityCompressionSignificance.Unknown ||
+            value == RealityCompressionSignificance.PlayerBound ||
+            value == RealityCompressionSignificance.QuestBound ||
+            value == RealityCompressionSignificance.UnsafeReference;
+
+        public static bool IsVeto(RealityExternalReferenceState value) =>
+            value == RealityExternalReferenceState.Unknown ||
+            value == RealityExternalReferenceState.PlayerControlled ||
+            value == RealityExternalReferenceState.QuestCritical;
+    }
+
+    /// <summary>Fidelity values a provider or process can represent.</summary>
+    [System.Flags]
+    public enum RealityFidelityMask
+    {
+        None = 0,
+        Dormant = 1 << 0,
+        Statistical = 1 << 1,
+        Narrative = 1 << 2,
+        Materialized = 1 << 3,
+        All = Dormant | Statistical | Narrative | Materialized
+    }
+
+    /// <summary>Owner of a fidelity transition when no live Map is being created or removed.</summary>
+    public enum RealityFidelityTransitionMechanism
+    {
+        Provider,
+        HostApproval,
+        Materialization,
+        Compression
+    }
+
+    /// <summary>Typed cause for a process requesting a more detailed representation.</summary>
+    public enum RealityFidelityEscalationReason
+    {
+        InsufficientResolution,
+        NamedAnchor,
+        PlayerInteraction,
+        HistoricalConflict,
+        ProviderDefined
+    }
+
+    /// <summary>Whether a provider is asking the host to resolve an escalation or declining it safely.</summary>
+    public enum RealityFidelityEscalationDisposition
+    {
+        Request,
+        Decline
+    }
+
+    /// <summary>Durable state of a fidelity escalation request.</summary>
+    public enum RealityFidelityEscalationStatus
+    {
+        Pending,
+        Approved,
+        Satisfied,
+        Declined,
+        Failed,
+        Cancelled
+    }
+
+    /// <summary>Policy attached to a typed escalation request.</summary>
+    public enum RealityFidelityEscalationPolicy
+    {
+        HostApproval,
+        ProviderMayHandle,
+        ProviderMayDecline
+    }
+
+    /// <summary>
+    /// Declares which representation owns a region's state and which projection transition is in flight.
+    /// Fidelity describes the resolution of latent state; it never describes whether a Map exists.
+    /// </summary>
+    public enum RealityRegionAuthority
+    {
+        Latent,
+        Materializing,
+        LiveProjection,
+        Compressing,
+        Quarantined
+    }
+
+    /// <summary>Traversal semantics for a persisted region connection.</summary>
+    public enum RealityRegionConnectionDirection
+    {
+        Directed,
+        Bidirectional
+    }
+
+    /// <summary>Lifecycle of a persisted region connection.</summary>
+    public enum RealityRegionConnectionLifecycle
+    {
+        Enabled,
+        Disabled,
+        Quarantined
     }
 
     /// <summary>Precision with which a fact is known or spatially protected.</summary>
@@ -38,8 +173,81 @@ namespace DeferredReality.API
         Exact
     }
 
-    /// <summary>Lifecycle state of a persisted framework record.</summary>
-    public enum RealityLifecycleState
+    /// <summary>Whether an observation remains eligible to constrain a future projection.</summary>
+    public enum RealityObservationLifecycle
+    {
+        Active,
+        Invalidated,
+        Superseded,
+        Quarantined
+    }
+
+    /// <summary>How strongly a provider asks a map realization to honor a translated fact.</summary>
+    public enum RealityMaterializationConstraintEnforcement
+    {
+        Advisory,
+        Required,
+        Exact
+    }
+
+    /// <summary>Stable semantics for turning spatial knowledge into a rematerialization plan.</summary>
+    public static class RealityObservationPrecisionRules
+    {
+        public static int Rank(RealityObservationPrecision precision)
+        {
+            switch (precision)
+            {
+                case RealityObservationPrecision.Rumor: return 0;
+                case RealityObservationPrecision.Region: return 1;
+                case RealityObservationPrecision.Habitat: return 2;
+                case RealityObservationPrecision.Area: return 3;
+                case RealityObservationPrecision.Edge: return 4;
+                case RealityObservationPrecision.Cell: return 5;
+                case RealityObservationPrecision.Exact: return 6;
+                default: return -1;
+            }
+        }
+
+        /// <summary>Default guidance only; providers choose whether a fact is advisory or hard.</summary>
+        public static RealityMaterializationConstraintEnforcement DefaultEnforcement(
+            RealityObservationPrecision precision)
+        {
+            switch (precision)
+            {
+                case RealityObservationPrecision.Cell:
+                    return RealityMaterializationConstraintEnforcement.Required;
+                case RealityObservationPrecision.Exact:
+                    return RealityMaterializationConstraintEnforcement.Exact;
+                case RealityObservationPrecision.Area:
+                case RealityObservationPrecision.Edge:
+                    return RealityMaterializationConstraintEnforcement.Required;
+                default:
+                    return RealityMaterializationConstraintEnforcement.Advisory;
+            }
+        }
+
+        public static RealityMaterializationConstraintEnforcement DefaultEnforcement(
+            RealityObservationPrecision precision, float confidence, bool playerObserved)
+        {
+            float safeConfidence = float.IsNaN(confidence) || float.IsInfinity(confidence)
+                ? 0f : Math.Max(0f, Math.Min(1f, confidence));
+            if (precision == RealityObservationPrecision.Exact)
+                return playerObserved && safeConfidence >= 0.75f
+                    ? RealityMaterializationConstraintEnforcement.Exact
+                    : RealityMaterializationConstraintEnforcement.Required;
+            if (precision == RealityObservationPrecision.Cell)
+                return safeConfidence >= 0.75f
+                    ? RealityMaterializationConstraintEnforcement.Required
+                    : RealityMaterializationConstraintEnforcement.Advisory;
+            return DefaultEnforcement(precision);
+        }
+
+        public static bool IsSpatiallyPrecise(RealityObservationPrecision precision) =>
+            Rank(precision) >= Rank(RealityObservationPrecision.Area);
+    }
+
+    /// <summary>Lifecycle state of opaque provider payload data; region projection authority is separate.</summary>
+    public enum RealityPayloadLifecycle
     {
         Active,
         Dormant,
@@ -70,7 +278,10 @@ namespace DeferredReality.API
         Manual,
         ProviderFailure,
         ProviderUnavailable,
-        ProviderRequested
+        ProviderRequested,
+        ProjectionAuthoritative,
+        ProjectionTransition,
+        FidelityEscalation
     }
 
     /// <summary>Policy used when two established constraints cannot both be applied.</summary>
@@ -149,7 +360,8 @@ namespace DeferredReality.API
         Materialization = 1 << 5,
         Compression = 1 << 6,
         Observations = 1 << 7,
-        Diagnostics = 1 << 8
+        Diagnostics = 1 << 8,
+        Fidelity = 1 << 9
     }
 
     /// <summary>Stages that may have begun during a materialization transaction.</summary>
@@ -165,8 +377,41 @@ namespace DeferredReality.API
         AnchorApply = 1 << 5,
         AnchorValidation = 1 << 6,
         ProviderValidation = 1 << 7,
-        RegionCommit = 1 << 8,
-        LegacyAnchorCommit = 1 << 9
+        RegionCommit = 1 << 8
+    }
+
+    /// <summary>Small deterministic helpers for fidelity validation.</summary>
+    public static class RealityFidelityRules
+    {
+        public static RealityFidelityMask Mask(RealityFidelity fidelity)
+        {
+            switch (fidelity)
+            {
+                case RealityFidelity.Dormant: return RealityFidelityMask.Dormant;
+                case RealityFidelity.Statistical: return RealityFidelityMask.Statistical;
+                case RealityFidelity.Narrative: return RealityFidelityMask.Narrative;
+                case RealityFidelity.Materialized: return RealityFidelityMask.Materialized;
+                default: return RealityFidelityMask.None;
+            }
+        }
+
+        public static bool Allows(RealityFidelityMask mask, RealityFidelity fidelity) =>
+            (mask & Mask(fidelity)) != 0;
+
+        public static bool IsHigher(RealityFidelity candidate, RealityFidelity current) =>
+            Rank(candidate) > Rank(current);
+
+        public static int Rank(RealityFidelity fidelity)
+        {
+            switch (fidelity)
+            {
+                case RealityFidelity.Dormant: return 0;
+                case RealityFidelity.Statistical: return 1;
+                case RealityFidelity.Narrative: return 2;
+                case RealityFidelity.Materialized: return 3;
+                default: return -1;
+            }
+        }
     }
 
     /// <summary>Stable, deterministic identity helpers shared by all providers.</summary>
@@ -398,10 +643,6 @@ namespace DeferredReality.API
             if (mainThreadId != currentThreadId)
                 throw new InvalidOperationException("Deferred Reality main-thread identity was already established by another thread.");
         }
-
-        /// <summary>Backward-compatible explicit initializer. It is never called implicitly by a mutation.</summary>
-        [Obsolete("Call EstablishMainThread from the RimWorld startup lifecycle instead.")]
-        public static void InitializeMainThread() => EstablishMainThread();
 
         /// <summary>Whether the current caller is the registered main thread.</summary>
         public static bool IsMainThread => mainThreadId != 0 && Thread.CurrentThread.ManagedThreadId == mainThreadId;

@@ -12,7 +12,6 @@ namespace DeferredReality.API
     /// <summary>Authoritative world-level store for latent reality.</summary>
     public sealed class DeferredRealityWorldComponent : WorldComponent
     {
-        public const int CurrentSaveSchema = 5;
         private const int MaximumObservationHistory = 8192;
         private const int MaximumQuarantineRecords = 4096;
         private const int MaximumConflictRecords = 2048;
@@ -24,26 +23,29 @@ namespace DeferredReality.API
         private const long StorageMaintenanceIntervalTicks = 6000L;
         private const int StorageMaintenanceMutationThreshold = 64;
 
-        private int saveSchema = CurrentSaveSchema;
-        private List<RealityRegionDescriptor> regions = new List<RealityRegionDescriptor>();
-        private List<RealityTopologyLink> topology = new List<RealityTopologyLink>();
-        private List<RealityPopulationRecord> populations = new List<RealityPopulationRecord>();
-        private List<RealityAnchorRecord> anchors = new List<RealityAnchorRecord>();
-        private List<RealityConstraint> constraints = new List<RealityConstraint>();
-        private List<RealityProcessRecord> processes = new List<RealityProcessRecord>();
-        private List<RealityObservationRecord> observations = new List<RealityObservationRecord>();
-        private List<RealityProviderPayload> providerPayloads = new List<RealityProviderPayload>();
-        private List<RealityMapAlias> mapAliases = new List<RealityMapAlias>();
-        private List<RealityMigrationMarker> migrations = new List<RealityMigrationMarker>();
-        private List<RealityAppliedOperation> appliedOperations = new List<RealityAppliedOperation>();
-        private List<RealityConflictReport> conflicts = new List<RealityConflictReport>();
-        private List<RealityQuarantineRecord> quarantine = new List<RealityQuarantineRecord>();
-        private List<RealityTransferJournalRecord> transferJournals = new List<RealityTransferJournalRecord>();
-        private List<RealityAdjacentMapRecord> adjacentMaps = new List<RealityAdjacentMapRecord>();
-        private List<RealityExcursionTicket> excursions = new List<RealityExcursionTicket>();
-        private List<RealityMapCreationIntentRecord> mapCreationIntents = new List<RealityMapCreationIntentRecord>();
-        private List<RealityAdjacentDiagnosticRecord> adjacentDiagnostics = new List<RealityAdjacentDiagnosticRecord>();
-        private List<RealityOperationRetentionWatermark> operationWatermarks = new List<RealityOperationRetentionWatermark>();
+        private readonly RealityLatentRecordStore latentRecords = new RealityLatentRecordStore();
+        private readonly RealityProjectionRecordStore projectionRecords = new RealityProjectionRecordStore();
+
+        // These narrow properties keep the public WorldComponent facade stable while the
+        // durable collection ownership lives in the two cohesive stores above.
+        private List<RealityRegionDescriptor> regions { get => latentRecords.regions; set => latentRecords.regions = value; }
+        private RealityRegionGraphStore graph => latentRecords.graph;
+        private List<RealityPopulationRecord> populations { get => latentRecords.populations; set => latentRecords.populations = value; }
+        private List<RealityAnchorRecord> anchors { get => latentRecords.anchors; set => latentRecords.anchors = value; }
+        private List<RealityConstraint> constraints { get => latentRecords.constraints; set => latentRecords.constraints = value; }
+        private List<RealityProcessRecord> processes { get => latentRecords.processes; set => latentRecords.processes = value; }
+        private List<RealityObservationRecord> observations { get => latentRecords.observations; set => latentRecords.observations = value; }
+        private List<RealityProviderPayload> providerPayloads { get => latentRecords.providerPayloads; set => latentRecords.providerPayloads = value; }
+        private List<RealityAppliedOperation> appliedOperations { get => latentRecords.appliedOperations; set => latentRecords.appliedOperations = value; }
+        private List<RealityConflictReport> conflicts { get => latentRecords.conflicts; set => latentRecords.conflicts = value; }
+        private List<RealityQuarantineRecord> quarantine { get => latentRecords.quarantine; set => latentRecords.quarantine = value; }
+        private List<RealityOperationRetentionWatermark> operationWatermarks { get => latentRecords.operationWatermarks; set => latentRecords.operationWatermarks = value; }
+        private List<RealityFidelityEscalationRecord> fidelityEscalations { get => latentRecords.fidelityEscalations; set => latentRecords.fidelityEscalations = value; }
+        private List<RealityTransferJournalRecord> transferJournals { get => projectionRecords.transferJournals; set => projectionRecords.transferJournals = value; }
+        private List<RealityAdjacentMapRecord> adjacentMaps { get => projectionRecords.adjacentMaps; set => projectionRecords.adjacentMaps = value; }
+        private List<RealityExcursionTicket> excursions { get => projectionRecords.excursions; set => projectionRecords.excursions = value; }
+        private List<RealityMapCreationIntentRecord> mapCreationIntents { get => projectionRecords.mapCreationIntents; set => projectionRecords.mapCreationIntents = value; }
+        private List<RealityAdjacentDiagnosticRecord> adjacentDiagnostics { get => projectionRecords.adjacentDiagnostics; set => projectionRecords.adjacentDiagnostics = value; }
 
         private readonly Dictionary<string, RealityRegionDescriptor> regionById = new Dictionary<string, RealityRegionDescriptor>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityPopulationRecord> populationById = new Dictionary<string, RealityPopulationRecord>(StringComparer.Ordinal);
@@ -52,12 +54,14 @@ namespace DeferredReality.API
         private readonly Dictionary<string, RealityProcessRecord> processById = new Dictionary<string, RealityProcessRecord>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityObservationRecord> observationById = new Dictionary<string, RealityObservationRecord>(StringComparer.Ordinal);
         private readonly HashSet<string> appliedOperationIds = new HashSet<string>(StringComparer.Ordinal);
-        private readonly Dictionary<int, string> regionByLegacyMapId = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> regionByProjectionMapId = new Dictionary<int, string>();
         private readonly Dictionary<int, RealityAdjacentMapRecord> adjacentMapById = new Dictionary<int, RealityAdjacentMapRecord>();
         private readonly Dictionary<string, RealityExcursionTicket> excursionById = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityExcursionTicket> activeExcursionById = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityMapCreationIntentRecord> mapCreationIntentById =
             new Dictionary<string, RealityMapCreationIntentRecord>(StringComparer.Ordinal);
+        private readonly Dictionary<string, RealityFidelityEscalationRecord> fidelityEscalationById =
+            new Dictionary<string, RealityFidelityEscalationRecord>(StringComparer.Ordinal);
         private readonly HashSet<string> activeMapCreationTransactions =
             new HashSet<string>(StringComparer.Ordinal);
         private readonly Dictionary<string, RealityExcursionTicket> pendingExcursions = new Dictionary<string, RealityExcursionTicket>(StringComparer.Ordinal);
@@ -86,10 +90,24 @@ namespace DeferredReality.API
         public int Revision => revision;
 
         /// <summary>World seed string used as the root deterministic input.</summary>
-        public string WorldSeed => Find.World?.info?.seedString ?? string.Empty;
+        public string WorldSeed
+        {
+            get
+            {
+                try { return Find.World?.info?.seedString ?? string.Empty; }
+                catch (NullReferenceException) { return string.Empty; }
+            }
+        }
 
         /// <summary>Current game tick, or zero during early load.</summary>
-        public long Now => Find.TickManager?.TicksGame ?? 0;
+        public long Now
+        {
+            get
+            {
+                try { return Find.TickManager?.TicksGame ?? 0; }
+                catch (NullReferenceException) { return 0; }
+            }
+        }
 
         /// <summary>Whether persisted adjacent roles or nonterminal excursions still require safety monitoring.</summary>
         public bool HasAdjacentSafetyWork => adjacentMapById.Count > 0 || activeExcursionById.Count > 0 ||
@@ -109,56 +127,18 @@ namespace DeferredReality.API
         {
             base.ExposeData();
             if (Scribe.mode == LoadSaveMode.Saving) RunStorageMaintenance(Now, true);
-            Scribe_Values.Look(ref saveSchema, "deferredRealitySaveSchema", CurrentSaveSchema);
             Scribe_Values.Look(ref revision, "deferredRealityRevision", 0);
-            Scribe_Collections.Look(ref regions, "deferredRealityRegions", LookMode.Deep);
-            Scribe_Collections.Look(ref topology, "deferredRealityTopology", LookMode.Deep);
-            Scribe_Collections.Look(ref populations, "deferredRealityPopulations", LookMode.Deep);
-            Scribe_Collections.Look(ref anchors, "deferredRealityAnchors", LookMode.Deep);
-            Scribe_Collections.Look(ref constraints, "deferredRealityConstraints", LookMode.Deep);
-            Scribe_Collections.Look(ref processes, "deferredRealityProcesses", LookMode.Deep);
-            Scribe_Collections.Look(ref observations, "deferredRealityObservations", LookMode.Deep);
-            Scribe_Collections.Look(ref providerPayloads, "deferredRealityProviderPayloads", LookMode.Deep);
-            Scribe_Collections.Look(ref mapAliases, "deferredRealityMapAliases", LookMode.Deep);
-            Scribe_Collections.Look(ref migrations, "deferredRealityMigrations", LookMode.Deep);
-            Scribe_Collections.Look(ref appliedOperations, "deferredRealityAppliedOperations", LookMode.Deep);
-            Scribe_Collections.Look(ref conflicts, "deferredRealityConflicts", LookMode.Deep);
-            Scribe_Collections.Look(ref quarantine, "deferredRealityQuarantine", LookMode.Deep);
-            Scribe_Collections.Look(ref transferJournals, "deferredRealityTransferJournals", LookMode.Deep);
-            Scribe_Collections.Look(ref adjacentMaps, "deferredRealityAdjacentMaps", LookMode.Deep);
-            Scribe_Collections.Look(ref excursions, "deferredRealityExcursions", LookMode.Deep);
-            Scribe_Collections.Look(ref mapCreationIntents, "deferredRealityMapCreationIntents", LookMode.Deep);
-            Scribe_Collections.Look(ref adjacentDiagnostics, "deferredRealityAdjacentDiagnostics", LookMode.Deep);
-            Scribe_Collections.Look(ref operationWatermarks, "deferredRealityOperationWatermarks", LookMode.Deep);
+            latentRecords.ExposeData();
+            projectionRecords.ExposeData();
             Scribe_Values.Look(ref storageMaintenanceDirty, "deferredRealityStorageMaintenanceDirty", false);
             Scribe_Values.Look(ref nextStorageMaintenanceTick, "deferredRealityNextStorageMaintenanceTick", 0L);
             Scribe_Values.Look(ref storageMaintenanceMutationCount, "deferredRealityStorageMaintenanceMutationCount", 0);
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
-                regions = regions ?? new List<RealityRegionDescriptor>();
-                topology = topology ?? new List<RealityTopologyLink>();
-                populations = populations ?? new List<RealityPopulationRecord>();
-                anchors = anchors ?? new List<RealityAnchorRecord>();
-                constraints = constraints ?? new List<RealityConstraint>();
-                processes = processes ?? new List<RealityProcessRecord>();
-                observations = observations ?? new List<RealityObservationRecord>();
-                providerPayloads = providerPayloads ?? new List<RealityProviderPayload>();
-                mapAliases = mapAliases ?? new List<RealityMapAlias>();
-                migrations = migrations ?? new List<RealityMigrationMarker>();
-                appliedOperations = appliedOperations ?? new List<RealityAppliedOperation>();
-                conflicts = conflicts ?? new List<RealityConflictReport>();
-                quarantine = quarantine ?? new List<RealityQuarantineRecord>();
-                transferJournals = transferJournals ?? new List<RealityTransferJournalRecord>();
-                adjacentMaps = adjacentMaps ?? new List<RealityAdjacentMapRecord>();
-                excursions = excursions ?? new List<RealityExcursionTicket>();
-                mapCreationIntents = mapCreationIntents ?? new List<RealityMapCreationIntentRecord>();
-                adjacentDiagnostics = adjacentDiagnostics ?? new List<RealityAdjacentDiagnosticRecord>();
-                operationWatermarks = operationWatermarks ?? new List<RealityOperationRetentionWatermark>();
+                latentRecords.EnsureLists();
+                projectionRecords.EnsureLists();
                 storageMaintenanceDirty = true;
                 nextStorageMaintenanceTick = Now;
-                if (saveSchema > CurrentSaveSchema)
-                    QuarantineInternal("save", "root", "core", "Save schema is newer than this framework version.", saveSchema.ToString(), Now);
-                saveSchema = CurrentSaveSchema;
                 RepairAndIndex();
             }
         }
@@ -291,25 +271,73 @@ namespace DeferredReality.API
                 .Select(item => item.Clone()).ToList();
         }
 
-        /// <summary>Records or updates a topology link.</summary>
-        public bool UpsertTopology(RealityTopologyLink link)
+        /// <summary>Records or updates one explicit region connection.</summary>
+        public bool UpsertConnection(RealityRegionConnection connection)
         {
             RealityThreadGuard.RequireMainThread();
-            if (link == null || string.IsNullOrEmpty(link.linkId) || string.IsNullOrEmpty(link.fromRegionId) || string.IsNullOrEmpty(link.toRegionId)) return false;
             EnsureIndexes();
-            RealityTopologyLink copy = link.Clone();
-            int index = topology.FindIndex(item => item?.linkId == copy.linkId);
-            if (index >= 0) topology[index] = copy;
-            else topology.Add(copy);
-            Touch("topology.changed", "core", copy.fromRegionId, copy.linkId);
+            if (!graph.Upsert(connection, out string diagnostic))
+            {
+                QuarantineInternal("connection", connection?.connectionId, connection?.ownerNamespace ?? "core",
+                    diagnostic, GraphFingerprint(connection), Now);
+                return false;
+            }
+            RealityRegionConnection copy = connection.Clone();
+            Touch("connection.changed", copy.ownerNamespace ?? "core", copy.sourceRegionId, copy.connectionId);
             return true;
         }
 
-        /// <summary>Returns detached topology links optionally scoped to a region.</summary>
-        public IReadOnlyList<RealityTopologyLink> TopologySnapshots(string regionId = null)
+        /// <summary>Returns a detached persisted graph record by its canonical stable ID.</summary>
+        public bool TryGetConnection(string connectionId, out RealityRegionConnection connection)
         {
-            return topology.Where(item => item != null && (string.IsNullOrEmpty(regionId) || item.fromRegionId == regionId || item.toRegionId == regionId))
-                .OrderBy(item => item.linkId, StringComparer.Ordinal).Select(item => item.Clone()).ToList();
+            EnsureIndexes();
+            return graph.TryGet(connectionId, out connection);
+        }
+
+        /// <summary>Returns all detached connections, including disabled records, in stable ID order.</summary>
+        public IReadOnlyList<RealityRegionConnection> ConnectionSnapshots(string regionId = null)
+        {
+            EnsureIndexes();
+            return graph.Snapshots(regionId);
+        }
+
+        /// <summary>Returns enabled connections traversable from a region.</summary>
+        public IReadOnlyList<RealityRegionConnection> OutgoingConnections(RealityRegionId regionId, string kind = null)
+        {
+            return OutgoingConnections(regionId.ToString(), kind);
+        }
+
+        /// <summary>Returns enabled connections traversable from a serialized region ID.</summary>
+        public IReadOnlyList<RealityRegionConnection> OutgoingConnections(string regionId, string kind = null)
+        {
+            EnsureIndexes();
+            return graph.Outgoing(regionId, kind);
+        }
+
+        /// <summary>Returns enabled connections that can enter a region.</summary>
+        public IReadOnlyList<RealityRegionConnection> IncomingConnections(RealityRegionId regionId, string kind = null)
+        {
+            return IncomingConnections(regionId.ToString(), kind);
+        }
+
+        /// <summary>Returns enabled connections that can enter a serialized region ID.</summary>
+        public IReadOnlyList<RealityRegionConnection> IncomingConnections(string regionId, string kind = null)
+        {
+            EnsureIndexes();
+            return graph.Incoming(regionId, kind);
+        }
+
+        /// <summary>Returns unique enabled neighboring region identities without performing pathfinding.</summary>
+        public IReadOnlyList<RealityRegionId> Neighbors(RealityRegionId regionId, string kind = null)
+        {
+            return Neighbors(regionId.ToString(), kind);
+        }
+
+        /// <summary>Returns unique enabled neighboring serialized region identities without pathfinding.</summary>
+        public IReadOnlyList<RealityRegionId> Neighbors(string regionId, string kind = null)
+        {
+            EnsureIndexes();
+            return graph.Neighbors(regionId, kind);
         }
 
         /// <summary>Returns a detached population record.</summary>
@@ -375,6 +403,202 @@ namespace DeferredReality.API
                 .OrderBy(item => item.nextDueTick).ThenByDescending(item => item.priority)
                 .ThenBy(item => item.providerId, StringComparer.Ordinal).ThenBy(item => item.processId, StringComparer.Ordinal)
                 .Select(item => new RealityProcessSnapshot(item)).ToList();
+        }
+
+        /// <summary>Returns durable fidelity escalation requests in deterministic order.</summary>
+        public IReadOnlyList<RealityFidelityEscalationRecord> FidelityEscalationSnapshots(string regionId = null)
+        {
+            EnsureIndexes();
+            return fidelityEscalations.Where(item => item != null &&
+                    (string.IsNullOrEmpty(regionId) || item.regionId == regionId))
+                .OrderBy(item => item.status).ThenBy(item => item.createdTick)
+                .ThenBy(item => item.requestId, StringComparer.Ordinal)
+                .Select(item => item.Clone()).ToList();
+        }
+
+        /// <summary>Reads one durable escalation request without exposing mutable store state.</summary>
+        public bool TryGetFidelityEscalation(string requestId, out RealityFidelityEscalationRecord record)
+        {
+            EnsureIndexes();
+            if (fidelityEscalationById.TryGetValue(requestId ?? string.Empty, out RealityFidelityEscalationRecord value))
+            {
+                record = value.Clone();
+                return true;
+            }
+            record = null;
+            return false;
+        }
+
+        /// <summary>Approves a pending escalation without creating a Map or changing fidelity.</summary>
+        public bool ApproveFidelityEscalation(string requestId, string diagnostic = null)
+        {
+            RealityThreadGuard.RequireMainThread();
+            RealityFidelityEscalationRecord record = FidelityEscalationRecord(requestId);
+            if (record == null || record.status != RealityFidelityEscalationStatus.Pending) return false;
+            record.status = RealityFidelityEscalationStatus.Approved;
+            record.updatedTick = Now;
+            record.diagnostic = diagnostic;
+            Touch("fidelity-escalation.approved", record.providerId, record.regionId, record.requestId);
+            return true;
+        }
+
+        /// <summary>Resolves an escalation after the host/provider has satisfied or declined its request.</summary>
+        public bool ResolveFidelityEscalation(string requestId, RealityFidelityEscalationStatus status,
+            string diagnostic = null)
+        {
+            RealityThreadGuard.RequireMainThread();
+            if (status != RealityFidelityEscalationStatus.Satisfied &&
+                status != RealityFidelityEscalationStatus.Declined &&
+                status != RealityFidelityEscalationStatus.Failed &&
+                status != RealityFidelityEscalationStatus.Cancelled) return false;
+            RealityFidelityEscalationRecord record = FidelityEscalationRecord(requestId);
+            if (record == null || record.status == RealityFidelityEscalationStatus.Satisfied ||
+                record.status == RealityFidelityEscalationStatus.Declined ||
+                record.status == RealityFidelityEscalationStatus.Failed ||
+                record.status == RealityFidelityEscalationStatus.Cancelled) return false;
+            if (status == RealityFidelityEscalationStatus.Satisfied)
+            {
+                if (record.policy != RealityFidelityEscalationPolicy.ProviderMayHandle &&
+                    record.status != RealityFidelityEscalationStatus.Approved) return false;
+                if (!RealityRegionId.TryParse(record.regionId, out RealityRegionId escalationRegion) ||
+                    !TryGetRegion(escalationRegion, out RealityRegionSnapshot snapshot) ||
+                    snapshot.fidelity != record.requestedFidelity ||
+                    (record.requestedFidelity == RealityFidelity.Materialized &&
+                     (snapshot.authority != RealityRegionAuthority.LiveProjection ||
+                      snapshot.projectionMapUniqueId < 0))) return false;
+            }
+            record.status = status;
+            record.updatedTick = Now;
+            record.resolvedTick = Now;
+            record.diagnostic = diagnostic;
+            if (status == RealityFidelityEscalationStatus.Satisfied)
+                ReactivateFidelityProcesses(record.regionId, record.requestId);
+            Touch("fidelity-escalation.resolved", record.providerId, record.regionId, record.requestId);
+            return true;
+        }
+
+        /// <summary>
+        /// Performs a provider-validated latent fidelity transition. Materialized transitions belong to
+        /// the transactional map materialization/compression services and are never performed here.
+        /// </summary>
+        public RealityFidelityTransitionResult TryTransitionFidelity(RealityFidelityTransitionRequest request)
+        {
+            RealityThreadGuard.RequireMainThread();
+            var result = new RealityFidelityTransitionResult { regionId = request?.regionId ?? default(RealityRegionId) };
+            if (request == null || !request.IsValid)
+            {
+                result.error = "A valid region and provider are required.";
+                return result;
+            }
+            if (!TryGetRegion(request.regionId, out RealityRegionSnapshot snapshot))
+            {
+                result.error = "The requested region is not registered.";
+                return result;
+            }
+            result.fromFidelity = snapshot.fidelity;
+            result.toFidelity = request.toFidelity;
+            if (snapshot.authority != RealityRegionAuthority.Latent)
+            {
+                result.error = "Only latent regions can change fidelity without a Map transition.";
+                return result;
+            }
+            if (request.toFidelity == RealityFidelity.Materialized)
+            {
+                result.error = "Materialized fidelity requires the transactional materialization service.";
+                return result;
+            }
+            if (request.fromFidelity != snapshot.fidelity)
+            {
+                result.error = "The requested fidelity transition does not match the region's current fidelity.";
+                return result;
+            }
+            if (request.toFidelity == snapshot.fidelity)
+            {
+                result.succeeded = true;
+                return result;
+            }
+            if (!RealityProviderRegistry.TryGetCapability(request.providerId, out IRealityFidelityProvider provider))
+            {
+                result.error = "The provider does not expose a fidelity contract.";
+                result.vetoes = new[] { new RealityVeto("fidelity.provider-unavailable", result.error, request.providerId, 2) };
+                return result;
+            }
+            var vetoes = new List<RealityVeto>();
+            RealityFidelityContract contract;
+            try
+            {
+                contract = provider.DescribeFidelity(new RealityProviderContext(this, request.providerId, request.now), snapshot);
+            }
+            catch (Exception exception)
+            {
+                result.error = "Provider fidelity description failed: " + exception.Message;
+                result.vetoes = new[] { new RealityVeto("fidelity.contract-exception", exception.Message, request.providerId, 3) };
+                return result;
+            }
+            if (contract == null || contract.currentFidelity != snapshot.fidelity ||
+                !contract.Supports(snapshot.fidelity) || !contract.Supports(request.toFidelity) ||
+                (!contract.AllowsTransition(snapshot.fidelity, request.toFidelity, RealityFidelityTransitionMechanism.Provider) &&
+                 !contract.AllowsTransition(snapshot.fidelity, request.toFidelity, RealityFidelityTransitionMechanism.HostApproval)))
+                vetoes.Add(new RealityVeto("fidelity.transition-not-declared",
+                    "The provider did not declare this fidelity or transition edge.", request.providerId, 2));
+            if (vetoes.Count == 0)
+            {
+                try
+                {
+                    if (!provider.CanTransitionFidelity(request, vetoes))
+                        vetoes.Add(new RealityVeto("fidelity.provider-veto", "The provider declined the fidelity transition.", request.providerId, 2));
+                }
+                catch (Exception exception)
+                {
+                    vetoes.Add(new RealityVeto("fidelity.transition-exception", exception.Message, request.providerId, 3));
+                }
+            }
+            if (vetoes.Count > 0)
+            {
+                result.error = "Fidelity transition was vetoed.";
+                result.vetoes = vetoes;
+                return result;
+            }
+            RealityFidelityEscalationRecord escalation = FidelityEscalationRecord(request.escalationRequestId);
+            if (!string.IsNullOrEmpty(request.escalationRequestId) &&
+                (escalation == null || escalation.status != RealityFidelityEscalationStatus.Approved))
+            {
+                result.error = "The escalation request is not approved.";
+                result.vetoes = new[] { new RealityVeto("fidelity.escalation-not-approved", result.error, request.providerId, 2) };
+                return result;
+            }
+            RealityWorldState state = CaptureState();
+            try
+            {
+                RealityRegionDescriptor descriptor = RegionRecord(request.regionId.ToString());
+                RealityFidelity previousFidelity = descriptor.fidelity;
+                descriptor.fidelity = request.toFidelity;
+                descriptor.lastUpdateTick = request.now;
+                if (escalation != null && !ResolveFidelityEscalation(escalation.requestId,
+                    RealityFidelityEscalationStatus.Satisfied, "Fidelity transition committed."))
+                    throw new InvalidOperationException("The approved fidelity escalation could not be satisfied by the transition.");
+                ReactivateFidelityProcesses(descriptor.regionId, request.escalationRequestId);
+                Touch("region.fidelity-changed", request.providerId, descriptor.regionId, request.toFidelity.ToString());
+                RealityRegionSnapshot changed = new RealityRegionSnapshot(descriptor);
+                try
+                {
+                    provider.OnFidelityChanged(new RealityProviderContext(this, request.providerId, request.now),
+                        changed, previousFidelity, request.toFidelity);
+                }
+                catch (Exception exception)
+                {
+                    Quarantine("fidelity-provider-notification", request.regionId.ToString(), request.providerId,
+                        exception.Message, request.toFidelity.ToString());
+                }
+                result.succeeded = true;
+                return result;
+            }
+            catch (Exception exception)
+            {
+                RestoreState(state);
+                result.error = "Fidelity transition rolled back: " + exception.Message;
+                return result;
+            }
         }
 
         /// <summary>Returns detached observations, newest first.</summary>
@@ -458,6 +682,82 @@ namespace DeferredReality.API
             return true;
         }
 
+        /// <summary>Creates or reuses one durable escalation request for a process output.</summary>
+        internal RealityFidelityEscalationRecord RequestFidelityEscalation(RealityProcessRecord process,
+            RealityProcessEscalationRequest request, RealityRegionSnapshot region, long now)
+        {
+            RealityThreadGuard.RequireMainThread();
+            if (process == null || request == null || !request.IsValid || region == null ||
+                string.IsNullOrEmpty(process.processId) || string.IsNullOrEmpty(process.providerId) ||
+                string.IsNullOrEmpty(process.regionId)) return null;
+            RealityFidelity requested = request.requestedFidelity;
+            if (!RealityFidelityRules.IsHigher(requested, region.fidelity))
+                return null;
+            string requestId = "fidelity:" + RealityDeterminism.Combine(process.providerId, process.processId,
+                process.regionId, requested.ToString(), request.reason.ToString(), request.subjectId ?? string.Empty);
+            EnsureIndexes();
+            if (fidelityEscalationById.TryGetValue(requestId, out RealityFidelityEscalationRecord existing))
+            {
+                existing.attemptCount = existing.attemptCount == int.MaxValue ? int.MaxValue : existing.attemptCount + 1;
+                existing.updatedTick = now;
+                process.pendingEscalationRequestId = existing.status == RealityFidelityEscalationStatus.Pending ||
+                    existing.status == RealityFidelityEscalationStatus.Approved ? requestId : null;
+                return existing;
+            }
+            var record = new RealityFidelityEscalationRecord
+            {
+                requestId = requestId,
+                processId = process.processId,
+                providerId = process.providerId,
+                regionId = process.regionId,
+                currentFidelity = region.fidelity,
+                requestedFidelity = requested,
+                reason = request.reason,
+                policy = request.policy,
+                status = request.disposition == RealityFidelityEscalationDisposition.Decline
+                    ? RealityFidelityEscalationStatus.Declined : RealityFidelityEscalationStatus.Pending,
+                subjectId = request.subjectId,
+                createdTick = now,
+                updatedTick = now,
+                attemptCount = 1,
+                resolvedTick = request.disposition == RealityFidelityEscalationDisposition.Decline ? now : -1,
+                diagnostic = request.disposition == RealityFidelityEscalationDisposition.Decline
+                    ? "Provider declined escalation and retained the current abstraction." : null
+            };
+            fidelityEscalations.Add(record);
+            fidelityEscalationById[record.requestId] = record;
+            if (record.status == RealityFidelityEscalationStatus.Pending)
+                process.pendingEscalationRequestId = record.requestId;
+            Touch(record.status == RealityFidelityEscalationStatus.Pending
+                ? "fidelity-escalation.pending" : "fidelity-escalation.declined",
+                process.providerId, process.regionId, record.requestId);
+            return record;
+        }
+
+        internal RealityFidelityEscalationRecord FidelityEscalationRecord(string requestId)
+        {
+            EnsureIndexes();
+            return string.IsNullOrEmpty(requestId) ? null :
+                fidelityEscalationById.TryGetValue(requestId, out RealityFidelityEscalationRecord record) ? record : null;
+        }
+
+        private void ReactivateFidelityProcesses(string regionId, string escalationRequestId)
+        {
+            foreach (RealityProcessRecord process in processes.Where(item => item != null && !item.cancelled &&
+                item.regionId == regionId && item.paused &&
+                (string.IsNullOrEmpty(escalationRequestId) || item.pendingEscalationRequestId == escalationRequestId)))
+            {
+                if (process.pauseReason != RealityProcessPauseReason.FidelityEscalation) continue;
+                process.paused = false;
+                process.pauseReason = RealityProcessPauseReason.None;
+                process.pendingEscalationRequestId = null;
+                process.lastError = null;
+                process.nextDueTick = Math.Min(process.nextDueTick, Now);
+                Touch("process.resumed", process.providerId, process.regionId, process.processId);
+            }
+            RefreshProcessScheduleCache();
+        }
+
         /// <summary>Updates one process payload in place so a provider can persist an execution stage safely.</summary>
         public bool UpdateProcessPayload(string processId, string payload)
         {
@@ -474,9 +774,17 @@ namespace DeferredReality.API
         public bool AddObservation(RealityObservationInput input)
         {
             RealityThreadGuard.RequireMainThread();
-            if (input == null || string.IsNullOrEmpty(input.observationId) || string.IsNullOrEmpty(input.regionId)) return false;
+            if (input == null || string.IsNullOrEmpty(input.observationId) || string.IsNullOrEmpty(input.regionId) ||
+                !Enum.IsDefined(typeof(RealityCompressionSignificance), input.compressionSignificance) ||
+                !Enum.IsDefined(typeof(RealityObservationPrecision), input.spatialPrecision) ||
+                !Enum.IsDefined(typeof(RealityObservationLifecycle), input.lifecycle) ||
+                (input.location != null && !Enum.IsDefined(typeof(RealityObservationPrecision), input.location.precision))) return false;
             EnsureIndexes();
             if (observationById.ContainsKey(input.observationId)) return true;
+            RealityLocation location = input.location?.Clone() ?? new RealityLocation();
+            if (RealityObservationPrecisionRules.Rank(location.precision) <
+                RealityObservationPrecisionRules.Rank(input.spatialPrecision))
+                location.precision = input.spatialPrecision;
             var record = new RealityObservationRecord
             {
                 observationId = input.observationId,
@@ -485,21 +793,26 @@ namespace DeferredReality.API
                 tick = input.tick,
                 subjectId = input.subjectId,
                 regionId = input.regionId,
+                compressionSignificance = input.compressionSignificance,
                 certainty = Clamp01(input.certainty),
                 confidence = Clamp01(input.confidence),
                 spatialPrecision = input.spatialPrecision,
+                location = location,
                 facet = input.facet,
                 playerObserved = input.playerObserved,
                 sensorDerived = input.sensorDerived,
                 inferred = input.inferred,
                 rumored = input.rumored,
-                estimate = input.estimate
+                estimate = input.estimate,
+                lifecycle = input.lifecycle,
+                supersededByObservationId = input.supersededByObservationId,
+                invalidationReason = input.invalidationReason
             };
             observations.Add(record);
             observationById[record.observationId] = record;
             if (observations.Count > MaximumObservationHistory)
             {
-                RealityObservationRecord oldest = RealityRetentionPolicy.FindOldestObservation(observations);
+                RealityObservationRecord oldest = RealityRetentionPolicy.FindOldestDiscardableObservation(observations);
                 if (oldest != null)
                 {
                     observations.Remove(oldest);
@@ -515,7 +828,36 @@ namespace DeferredReality.API
             return true;
         }
 
-        /// <summary>Associates an active map with a stable region and stores only the map ID as a legacy alias/link.</summary>
+        /// <summary>Explicit gameplay invalidation of knowledge; invalidated facts no longer constrain rematerialization.</summary>
+        public bool InvalidateObservation(string observationId, string reason, long now = -1L)
+        {
+            RealityThreadGuard.RequireMainThread();
+            EnsureIndexes();
+            if (string.IsNullOrEmpty(observationId) || !observationById.TryGetValue(observationId, out RealityObservationRecord record)) return false;
+            record.lifecycle = RealityObservationLifecycle.Invalidated;
+            record.invalidationReason = reason ?? string.Empty;
+            record.supersededByObservationId = null;
+            Touch("observation.invalidated", record.source, record.regionId, record.observationId);
+            return true;
+        }
+
+        /// <summary>Explicit gameplay supersession of knowledge by a newer established fact.</summary>
+        public bool SupersedeObservation(string observationId, string supersedingObservationId, string reason = null,
+            long now = -1L)
+        {
+            RealityThreadGuard.RequireMainThread();
+            EnsureIndexes();
+            if (string.IsNullOrEmpty(observationId) || string.IsNullOrEmpty(supersedingObservationId) ||
+                observationId == supersedingObservationId || !observationById.TryGetValue(observationId, out RealityObservationRecord record) ||
+                !observationById.ContainsKey(supersedingObservationId)) return false;
+            record.lifecycle = RealityObservationLifecycle.Superseded;
+            record.supersededByObservationId = supersedingObservationId;
+            record.invalidationReason = reason ?? string.Empty;
+            Touch("observation.superseded", record.source, record.regionId, record.observationId);
+            return true;
+        }
+
+        /// <summary>Associates a live Map projection with a durable region identity.</summary>
         public RealityRegionId RegisterMap(Map map)
         {
             RealityThreadGuard.RequireMainThread();
@@ -525,38 +867,16 @@ namespace DeferredReality.API
                 out bool intentHandled))
                 return intendedRegion;
             if (intentHandled) return default(RealityRegionId);
-            if (regionByLegacyMapId.TryGetValue(map.uniqueID, out string existingId) && RealityRegionId.TryParse(existingId, out RealityRegionId existing))
-            {
-                // Persisted aliases remain authoritative; a second live map cannot steal the identity.
-                return MarkMapActive(existing, map) ? existing : default(RealityRegionId);
-            }
             if (!map.Tile.Valid)
             {
-                QuarantineInternal("map", map.uniqueID.ToString(), "core", "Map has no valid world tile; stable placement requires migration review.", null, Now);
+                QuarantineInternal("map", map.uniqueID.ToString(), "core", "Map has no valid world tile; projection ownership cannot be established.", null, Now);
                 return default(RealityRegionId);
             }
             if (!TryResolveMapIdentity(map, out RealityRegionId id)) return default(RealityRegionId);
-            RealityRegionDescriptor existingRegion = RegionRecord(id.ToString());
-            if (existingRegion != null && existingRegion.activeMapUniqueId >= 0 && existingRegion.activeMapUniqueId != map.uniqueID)
-            {
-                QuarantineInternal("map", map.uniqueID.ToString(), id.ProviderNamespace,
-                    "A live map identity is already claimed by another map.", id.ToString(), Now);
-                return default(RealityRegionId);
-            }
-            EnsureRegion(id, "World tile " + id.WorldTile, Now);
-            mapAliases.Add(new RealityMapAlias { legacyMapId = map.uniqueID, regionId = id.ToString(), migratedTick = Now });
-            regionByLegacyMapId[map.uniqueID] = id.ToString();
-            if (!MarkMapActive(id, map))
-            {
-                mapAliases.RemoveAll(alias => alias != null && alias.legacyMapId == map.uniqueID && alias.regionId == id.ToString());
-                regionByLegacyMapId.Remove(map.uniqueID);
-                return default(RealityRegionId);
-            }
-            Touch("map.mapped", "core", id.ToString(), map.uniqueID.ToString());
-            return id;
+            return RegisterMap(map, id);
         }
 
-        /// <summary>Associates a map with an explicit stable region, preserving the legacy tile-based overload.</summary>
+        /// <summary>Associates a live Map projection with an explicit provider-owned region identity.</summary>
         public RealityRegionId RegisterMap(Map map, RealityRegionId regionId)
         {
             RealityThreadGuard.RequireMainThread();
@@ -572,193 +892,50 @@ namespace DeferredReality.API
                     "Explicit map region does not match the map world tile.", regionId.ToString(), Now);
                 return default(RealityRegionId);
             }
-            if (regionByLegacyMapId.TryGetValue(map.uniqueID, out string previousId) && previousId != regionId.ToString())
+            if (TryRegionForProjectionMapId(map.uniqueID, out RealityRegionId previousId) && previousId != regionId)
             {
                 QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
-                    "A persisted map alias is authoritative and cannot be remapped by a later lifecycle callback.", previousId, Now);
-                return RealityRegionId.TryParse(previousId, out RealityRegionId persisted) ? persisted : default(RealityRegionId);
+                    "A live projection binding cannot be remapped to another region.", previousId.ToString(), Now);
+                return default(RealityRegionId);
             }
             RealityRegionDescriptor existingRegion = RegionRecord(regionId.ToString());
-            if (existingRegion != null && existingRegion.activeMapUniqueId >= 0 && existingRegion.activeMapUniqueId != map.uniqueID)
+            if (existingRegion != null && existingRegion.projectionMapUniqueId >= 0 && existingRegion.projectionMapUniqueId != map.uniqueID)
             {
                 QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
                     "A live map identity is already claimed by another map.", regionId.ToString(), Now);
                 return default(RealityRegionId);
             }
             EnsureRegion(regionId, "World tile " + regionId.WorldTile, Now);
-            RealityMapAlias alias = mapAliases.FirstOrDefault(item => item != null && item.legacyMapId == map.uniqueID);
-            string previousAliasRegion = alias?.regionId;
-            long previousAliasTick = alias?.migratedTick ?? 0L;
-            if (alias == null)
-            {
-                mapAliases.Add(new RealityMapAlias { legacyMapId = map.uniqueID, regionId = regionId.ToString(), migratedTick = Now });
-            }
-            else
-            {
-                alias.regionId = regionId.ToString();
-                alias.migratedTick = Now;
-            }
-            regionByLegacyMapId[map.uniqueID] = regionId.ToString();
             if (!MarkMapActive(regionId, map))
             {
-                if (alias == null)
-                    mapAliases.RemoveAll(item => item != null && item.legacyMapId == map.uniqueID && item.regionId == regionId.ToString());
-                else
-                {
-                    alias.regionId = previousAliasRegion;
-                    alias.migratedTick = previousAliasTick;
-                }
-                if (string.IsNullOrEmpty(previousAliasRegion)) regionByLegacyMapId.Remove(map.uniqueID);
-                else regionByLegacyMapId[map.uniqueID] = previousAliasRegion;
                 return default(RealityRegionId);
             }
             Touch("map.mapped", regionId.ProviderNamespace, regionId.ToString(), map.uniqueID.ToString());
             return regionId;
         }
 
-        /// <summary>
-        /// Rebinds one legacy map alias to a provider-owned identity during an explicit migration.
-        /// Normal registration deliberately refuses alias remapping; this additive API is the
-        /// narrowly scoped escape hatch for providers correcting an older, persisted identity.
-        /// </summary>
-        public bool TryMigrateMapIdentity(Map map, RealityRegionId regionId, out RealityRegionId previousRegion)
-        {
-            return TryMigrateMapIdentity(map, regionId, out previousRegion, out _);
-        }
-
-        /// <summary>
-        /// Rebinds a legacy map alias and returns a bounded diagnostic when the migration is rejected.
-        /// The original overload remains the compatibility surface for callers that only need success.
-        /// </summary>
-        public bool TryMigrateMapIdentity(Map map, RealityRegionId regionId, out RealityRegionId previousRegion,
-            out string diagnostic)
-        {
-            RealityThreadGuard.RequireMainThread();
-            previousRegion = default(RealityRegionId);
-            diagnostic = string.Empty;
-            if (map == null || !map.Tile.Valid || !regionId.IsValid || map.Tile != (PlanetTile)regionId.WorldTile)
-            {
-                diagnostic = "The map tile and destination region identity do not match.";
-                return false;
-            }
-            EnsureIndexes();
-
-            if (!regionByLegacyMapId.TryGetValue(map.uniqueID, out string previousId) ||
-                !RealityRegionId.TryParse(previousId, out RealityRegionId existing))
-            {
-                if (RegisterMap(map, regionId).IsValid) return true;
-                diagnostic = "The destination region could not be registered for the map.";
-                return false;
-            }
-            previousRegion = existing;
-            if (existing == regionId)
-            {
-                if (MarkMapActive(regionId, map)) return true;
-                diagnostic = "The destination region could not be activated for the map.";
-                return false;
-            }
-
-            RealityRegionDescriptor previousRecord = RegionRecord(existing.ToString());
-            if (previousRecord != null && previousRecord.activeMapUniqueId >= 0 &&
-                previousRecord.activeMapUniqueId != map.uniqueID)
-            {
-                QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
-                    "A persisted map identity is active on another map.", existing.ToString(), Now);
-                diagnostic = "The previous map identity is active on another map.";
-                return false;
-            }
-            RealityRegionDescriptor targetRecord = RegionRecord(regionId.ToString());
-            if (targetRecord != null && targetRecord.activeMapUniqueId >= 0 &&
-                targetRecord.activeMapUniqueId != map.uniqueID)
-            {
-                QuarantineInternal("map", map.uniqueID.ToString(), regionId.ProviderNamespace,
-                    "The migrated map identity is active on another map.", regionId.ToString(), Now);
-                diagnostic = "The destination map identity is active on another map.";
-                return false;
-            }
-
-            RealityRegionDescriptor previousBackup = previousRecord?.Clone();
-            RealityRegionDescriptor targetBackup = targetRecord?.Clone();
-            EnsureRegion(regionId, "World tile " + regionId.WorldTile, Now);
-            targetRecord = RegionRecord(regionId.ToString());
-            if (previousRecord != null)
-            {
-                previousRecord.activeMapUniqueId = -1;
-                previousRecord.fidelity = populations.Any(item => item?.regionId == previousRecord.regionId)
-                    ? RealityFidelity.Statistical : RealityFidelity.Dormant;
-                previousRecord.lastUpdateTick = Now;
-            }
-            RealityMapAlias alias = mapAliases.FirstOrDefault(item => item != null && item.legacyMapId == map.uniqueID);
-            if (alias == null)
-            {
-                RestoreMapIdentityMigration(previousBackup, targetBackup, map.uniqueID, previousId, null, regionId.ToString());
-                diagnostic = "The persisted map alias disappeared during migration.";
-                return false;
-            }
-            alias.regionId = regionId.ToString();
-            alias.migratedTick = Now;
-            regionByLegacyMapId[map.uniqueID] = regionId.ToString();
-            if (!MarkMapActive(regionId, map))
-            {
-                RestoreMapIdentityMigration(previousBackup, targetBackup, map.uniqueID, previousId, alias,
-                    regionId.ToString());
-                diagnostic = "The destination region rejected activation; the previous identity was restored.";
-                return false;
-            }
-            Touch("map.identity.migrated", regionId.ProviderNamespace, regionId.ToString(), previousId);
-            return true;
-        }
-
-        private void RestoreMapIdentityMigration(RealityRegionDescriptor previousBackup,
-            RealityRegionDescriptor targetBackup, int mapId, string previousId, RealityMapAlias alias, string targetId)
-        {
-            if (previousBackup != null)
-            {
-                int index = regions.FindIndex(item => item?.regionId == previousBackup.regionId);
-                if (index >= 0) regions[index] = previousBackup;
-                else regions.Add(previousBackup);
-                regionById[previousBackup.regionId] = previousBackup;
-            }
-            if (targetBackup != null)
-            {
-                int index = regions.FindIndex(item => item?.regionId == targetBackup.regionId);
-                if (index >= 0) regions[index] = targetBackup;
-                else regions.Add(targetBackup);
-                regionById[targetBackup.regionId] = targetBackup;
-            }
-            else if (!string.IsNullOrEmpty(targetId))
-            {
-                regions.RemoveAll(item => item?.regionId == targetId);
-                regionById.Remove(targetId);
-            }
-            if (alias != null)
-            {
-                alias.regionId = previousId;
-                alias.migratedTick = Now;
-            }
-            regionByLegacyMapId[mapId] = previousId;
-        }
-
-        /// <summary>Releases the active-map link while preserving latent state for future materialization.</summary>
+        /// <summary>Releases the live projection binding while preserving latent state.</summary>
         public void UnregisterMap(Map map)
         {
             RealityThreadGuard.RequireMainThread();
-            if (map == null || !TryRegionForLegacyMap(map.uniqueID, out RealityRegionId regionId)) return;
+            if (map == null || !TryRegionForProjectionMapId(map.uniqueID, out RealityRegionId regionId)) return;
             RealityRegionDescriptor descriptor = RegionRecord(regionId.ToString());
-            if (descriptor == null || descriptor.activeMapUniqueId != map.uniqueID) return;
-            descriptor.activeMapUniqueId = -1;
+            if (descriptor == null || descriptor.projectionMapUniqueId != map.uniqueID) return;
+            descriptor.projectionMapUniqueId = -1;
+            descriptor.authority = RealityRegionAuthority.Quarantined == descriptor.authority
+                ? descriptor.authority : RealityRegionAuthority.Latent;
             descriptor.fidelity = populations.Any(item => item?.regionId == descriptor.regionId)
                 ? RealityFidelity.Statistical : RealityFidelity.Dormant;
             descriptor.lastUpdateTick = Now;
             Touch("map.unmapped", "core", descriptor.regionId, map.uniqueID.ToString());
         }
 
-        /// <summary>Looks up the stable identity associated with a legacy map ID.</summary>
-        public bool TryRegionForLegacyMap(int mapId, out RealityRegionId regionId)
+        /// <summary>Looks up the stable region whose live projection owns a Map.uniqueID.</summary>
+        public bool TryRegionForProjectionMapId(int mapId, out RealityRegionId regionId)
         {
             EnsureIndexes();
             regionId = default(RealityRegionId);
-            return regionByLegacyMapId.TryGetValue(mapId, out string value) && RealityRegionId.TryParse(value, out regionId);
+            return regionByProjectionMapId.TryGetValue(mapId, out string value) && RealityRegionId.TryParse(value, out regionId);
         }
 
         /// <summary>Returns whether a mutation operation has already been applied.</summary>
@@ -830,7 +1007,7 @@ namespace DeferredReality.API
                 sequence = sequence,
                 kind = kind,
                 tick = tick,
-                schemaVersion = 2
+
             });
             Touch("operation.applied", providerId, null, operationId);
             MarkStorageMaintenanceDirty(tick);
@@ -864,14 +1041,13 @@ namespace DeferredReality.API
             return true;
         }
 
-        /// <summary>Declares a provider/domain sequence cursor. Legacy tick proofs are never upgraded implicitly.</summary>
+        /// <summary>Declares a provider/domain sequence cursor. Tick history alone is never upgraded implicitly.</summary>
         public bool DeclareExactlyOnceDomain(string providerId, string kind, string domainId, bool allowGaps, string proof)
         {
             RealityThreadGuard.RequireMainThread();
             if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(kind) ||
                 string.IsNullOrWhiteSpace(domainId) || string.IsNullOrWhiteSpace(proof)) return false;
-            if (RealityProviderRegistry.TryGet(providerId.Trim(), out IRealityProvider provider) &&
-                provider is IRealityExactlyOnceProvider descriptor &&
+            if (RealityProviderRegistry.TryGetCapability(providerId.Trim(), out IRealityExactlyOnceProvider descriptor) &&
                 (!descriptor.TryDescribeExactlyOnceDomain(kind.Trim(), domainId.Trim(), out RealityExactlyOnceDomain domain) ||
                  domain == null || domain.kind != kind.Trim() || domain.domainId != domainId.Trim() ||
                  domain.allowGaps != allowGaps)) return false;
@@ -881,7 +1057,6 @@ namespace DeferredReality.API
             if (existing != null && existing.sequenceCursor >= 0) return false;
             return UpsertOperationRetentionWatermark(new RealityOperationRetentionWatermark
             {
-                schemaVersion = 2,
                 providerId = providerId.Trim(),
                 kind = kind.Trim(),
                 domainId = domainId.Trim(),
@@ -919,31 +1094,6 @@ namespace DeferredReality.API
             return operationWatermarks.Where(item => item != null && (string.IsNullOrEmpty(providerId) || item.providerId == providerId))
                 .OrderBy(item => item.providerId, StringComparer.Ordinal).ThenBy(item => item.kind, StringComparer.Ordinal)
                 .ThenBy(item => item.domainId, StringComparer.Ordinal).Select(item => item.Clone()).ToList();
-        }
-
-        /// <summary>Returns whether a provider migration version is committed.</summary>
-        public bool IsMigrationCommitted(string providerId, string consumerId, int version)
-        {
-            return migrations.Any(item => item != null && item.providerId == providerId && item.consumerId == consumerId && item.version >= version);
-        }
-
-        /// <summary>Commits an idempotent migration marker after provider validation.</summary>
-        public bool CommitMigration(string providerId, string consumerId, int version, string checksum)
-        {
-            RealityThreadGuard.RequireMainThread();
-            if (string.IsNullOrEmpty(providerId) || string.IsNullOrEmpty(consumerId) || version < 1) return false;
-            RealityMigrationMarker marker = migrations.FirstOrDefault(item => item?.providerId == providerId && item.consumerId == consumerId);
-            if (marker != null && marker.version >= version) return true;
-            if (marker == null)
-            {
-                marker = new RealityMigrationMarker { providerId = providerId, consumerId = consumerId };
-                migrations.Add(marker);
-            }
-            marker.version = version;
-            marker.checksum = checksum;
-            marker.committedTick = Now;
-            Touch("migration.committed", providerId, null, consumerId + ":" + version);
-            return true;
         }
 
         /// <summary>Adds durable audit data for unsupported or corrupted records.</summary>
@@ -1154,24 +1304,12 @@ namespace DeferredReality.API
             if (existing != null && (existing.regionId != regionId.ToString() || existing.providerId != intent.providerId ||
                 !string.IsNullOrEmpty(existing.originRegionId) && existing.originRegionId != intent.originRegionId ||
                 existing.originMapUniqueId >= 0 && existing.originMapUniqueId != intent.originMapUniqueId)) return false;
-            if (regionByLegacyMapId.TryGetValue(map.uniqueID, out string mappedRegion) && mappedRegion != regionId.ToString()) return false;
-            RealityMapAlias alias = mapAliases.FirstOrDefault(item => item != null && item.legacyMapId == map.uniqueID);
-            if (alias != null && alias.regionId != regionId.ToString()) return false;
+            if (TryRegionForProjectionMapId(map.uniqueID, out RealityRegionId mappedRegion) && mappedRegion != regionId) return false;
             RealityRegionDescriptor descriptor = RegionRecord(regionId.ToString());
-            if (descriptor != null && descriptor.activeMapUniqueId >= 0 && descriptor.activeMapUniqueId != map.uniqueID) return false;
+            if (descriptor != null && descriptor.projectionMapUniqueId >= 0 && descriptor.projectionMapUniqueId != map.uniqueID) return false;
             EnsureRegion(regionId, "World tile " + regionId.WorldTile, Now);
-            bool addedAlias = false;
-            if (alias == null)
-            {
-                alias = new RealityMapAlias { legacyMapId = map.uniqueID, regionId = regionId.ToString(), migratedTick = Now };
-                mapAliases.Add(alias);
-                addedAlias = true;
-            }
-            regionByLegacyMapId[map.uniqueID] = regionId.ToString();
             if (!MarkMapActive(regionId, map))
             {
-                if (addedAlias) mapAliases.Remove(alias);
-                regionByLegacyMapId.Remove(map.uniqueID);
                 return false;
             }
             RealityAdjacentMapRecord record = existing ?? new RealityAdjacentMapRecord { mapUniqueId = map.uniqueID };
@@ -1780,15 +1918,13 @@ namespace DeferredReality.API
             return new RealityWorldState
             {
                 regions = regions.Where(item => item != null).Select(item => item.Clone()).ToList(),
-                topology = topology.Where(item => item != null).Select(item => item.Clone()).ToList(),
+                connections = graph.Capture(),
                 populations = populations.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 anchors = anchors.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 constraints = constraints.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 processes = processes.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 observations = observations.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 providerPayloads = providerPayloads.Where(item => item != null).Select(item => item.Clone()).ToList(),
-                mapAliases = mapAliases.Where(item => item != null).Select(item => item.Clone()).ToList(),
-                migrations = migrations.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 appliedOperations = appliedOperations.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 conflicts = conflicts.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 quarantine = quarantine.Where(item => item != null).Select(item => item.Clone()).ToList(),
@@ -1797,7 +1933,8 @@ namespace DeferredReality.API
                 excursions = excursions.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 mapCreationIntents = mapCreationIntents.Where(item => item != null).Select(item => item.Clone()).ToList(),
                 adjacentDiagnostics = adjacentDiagnostics.Where(item => item != null).Select(item => item.Clone()).ToList(),
-                operationWatermarks = operationWatermarks.Where(item => item != null).Select(item => item.Clone()).ToList()
+                operationWatermarks = operationWatermarks.Where(item => item != null).Select(item => item.Clone()).ToList(),
+                fidelityEscalations = fidelityEscalations.Where(item => item != null).Select(item => item.Clone()).ToList()
             };
         }
 
@@ -1806,15 +1943,13 @@ namespace DeferredReality.API
             RealityThreadGuard.RequireMainThread();
             if (state == null) return;
             regions = state.regions ?? new List<RealityRegionDescriptor>();
-            topology = state.topology ?? new List<RealityTopologyLink>();
+            graph.Restore(state.connections);
             populations = state.populations ?? new List<RealityPopulationRecord>();
             anchors = state.anchors ?? new List<RealityAnchorRecord>();
             constraints = state.constraints ?? new List<RealityConstraint>();
             processes = state.processes ?? new List<RealityProcessRecord>();
             observations = state.observations ?? new List<RealityObservationRecord>();
             providerPayloads = state.providerPayloads ?? new List<RealityProviderPayload>();
-            mapAliases = state.mapAliases ?? new List<RealityMapAlias>();
-            migrations = state.migrations ?? new List<RealityMigrationMarker>();
             appliedOperations = state.appliedOperations ?? new List<RealityAppliedOperation>();
             conflicts = state.conflicts ?? new List<RealityConflictReport>();
             quarantine = state.quarantine ?? new List<RealityQuarantineRecord>();
@@ -1824,6 +1959,7 @@ namespace DeferredReality.API
             mapCreationIntents = state.mapCreationIntents ?? new List<RealityMapCreationIntentRecord>();
             adjacentDiagnostics = state.adjacentDiagnostics ?? new List<RealityAdjacentDiagnosticRecord>();
             operationWatermarks = state.operationWatermarks ?? new List<RealityOperationRetentionWatermark>();
+            fidelityEscalations = state.fidelityEscalations ?? new List<RealityFidelityEscalationRecord>();
             storageMaintenanceDirty = true;
             nextStorageMaintenanceTick = Now;
             storageMaintenanceMutationCount = 0;
@@ -1889,6 +2025,26 @@ namespace DeferredReality.API
             return reactivated;
         }
 
+        internal int ReactivateProjectionProcesses(string regionId)
+        {
+            EnsureIndexes();
+            int reactivated = 0;
+            foreach (RealityProcessRecord process in processes)
+            {
+                if (process == null || process.cancelled || !process.paused ||
+                    process.pauseReason != RealityProcessPauseReason.ProjectionAuthoritative &&
+                    process.pauseReason != RealityProcessPauseReason.ProjectionTransition ||
+                    !string.Equals(process.regionId, regionId, StringComparison.Ordinal)) continue;
+                process.paused = false;
+                process.pauseReason = RealityProcessPauseReason.None;
+                process.lastError = null;
+                reactivated++;
+                Touch("process.resumed", process.providerId, process.regionId, process.processId);
+            }
+            if (reactivated > 0) RefreshProcessScheduleCache();
+            return reactivated;
+        }
+
         internal RealityConstraint ConstraintRecord(string id)
         {
             EnsureIndexes();
@@ -1913,21 +2069,93 @@ namespace DeferredReality.API
             QuarantineInternal("process", process?.processId, process?.providerId, reason, process?.payload, Now);
         }
 
+        private static string GraphFingerprint(RealityRegionConnection connection)
+        {
+            if (connection == null) return null;
+            return (connection.connectionId ?? string.Empty) + "|" + (connection.sourceRegionId ?? string.Empty) + "|" +
+                (connection.destinationRegionId ?? string.Empty) + "|" + connection.direction + "|" +
+                (connection.kind ?? string.Empty) + "|" + (connection.ownerNamespace ?? string.Empty) + "|" +
+                (connection.identityKey ?? string.Empty);
+        }
+
         private bool MarkMapActive(RealityRegionId id, Map map)
         {
             RealityRegionDescriptor record = RegionRecord(id.ToString());
             if (record == null || map == null) return false;
-            if (record.activeMapUniqueId >= 0 && record.activeMapUniqueId != map.uniqueID)
+            if (record.authority == RealityRegionAuthority.Quarantined) return false;
+            if (record.projectionMapUniqueId >= 0 && record.projectionMapUniqueId != map.uniqueID)
             {
                 QuarantineInternal("map", map.uniqueID.ToString(), id.ProviderNamespace,
                     "A second live map attempted to claim an already active region.", id.ToString(), Now);
                 return false;
             }
-            record.activeMapUniqueId = map.uniqueID;
+            record.projectionMapUniqueId = map.uniqueID;
             record.lastKnownWorldTile = id.WorldTile;
             record.fidelity = RealityFidelity.Materialized;
-            record.lifecycle = RealityLifecycleState.Active;
+            if (record.authority != RealityRegionAuthority.Materializing &&
+                record.authority != RealityRegionAuthority.Compressing)
+                record.authority = RealityRegionAuthority.LiveProjection;
+            record.lastProjectionTick = Now;
             record.lastUpdateTick = Now;
+            regionByProjectionMapId[map.uniqueID] = id.ToString();
+            return true;
+        }
+
+        internal bool BeginMaterialization(RealityRegionId id)
+        {
+            RealityRegionDescriptor record = RegionRecord(id.ToString());
+            if (record == null || record.authority == RealityRegionAuthority.Quarantined ||
+                record.authority == RealityRegionAuthority.Materializing ||
+                record.authority == RealityRegionAuthority.Compressing) return false;
+            record.authority = RealityRegionAuthority.Materializing;
+            record.lastUpdateTick = Now;
+            return true;
+        }
+
+        internal bool BeginCompression(RealityRegionId id)
+        {
+            RealityRegionDescriptor record = RegionRecord(id.ToString());
+            if (record == null || record.authority != RealityRegionAuthority.LiveProjection) return false;
+            record.authority = RealityRegionAuthority.Compressing;
+            record.lastUpdateTick = Now;
+            return true;
+        }
+
+        internal void QuarantineProjection(RealityRegionId id, string reason)
+        {
+            RealityRegionDescriptor record = RegionRecord(id.ToString());
+            if (record == null) return;
+            record.authority = RealityRegionAuthority.Quarantined;
+            record.lastUpdateTick = Now;
+            QuarantineInternal("region-projection", record.regionId, id.ProviderNamespace, reason, null, Now);
+        }
+
+        internal bool CommitMaterialization(RealityRegionId id, int mapUniqueId, long tick)
+        {
+            RealityRegionDescriptor record = RegionRecord(id.ToString());
+            if (record == null || mapUniqueId < 0 || record.projectionMapUniqueId != mapUniqueId ||
+                (record.authority != RealityRegionAuthority.Materializing &&
+                 record.authority != RealityRegionAuthority.LiveProjection)) return false;
+            record.projectionMapUniqueId = mapUniqueId;
+            record.authority = RealityRegionAuthority.LiveProjection;
+            record.fidelity = RealityFidelity.Materialized;
+            record.lastProjectionTick = tick;
+            record.lastUpdateTick = tick;
+            regionByProjectionMapId[mapUniqueId] = id.ToString();
+            return true;
+        }
+
+        internal bool CommitCompression(RealityRegionId id, long tick)
+        {
+            RealityRegionDescriptor record = RegionRecord(id.ToString());
+            if (record == null || record.authority != RealityRegionAuthority.Compressing) return false;
+            record.projectionMapUniqueId = -1;
+            record.authority = RealityRegionAuthority.Latent;
+            record.fidelity = RealityFidelity.Statistical;
+            record.lastUpdateTick = tick;
+            foreach (int mapId in regionByProjectionMapId.Where(item => item.Value == id.ToString())
+                .Select(item => item.Key).ToList()) regionByProjectionMapId.Remove(mapId);
+            ReactivateProjectionProcesses(id.ToString());
             return true;
         }
 
@@ -2004,7 +2232,7 @@ namespace DeferredReality.API
             processById.Clear();
             observationById.Clear();
             appliedOperationIds.Clear();
-            regionByLegacyMapId.Clear();
+            regionByProjectionMapId.Clear();
             mapCreationIntentById.Clear();
             activeExcursionById.Clear();
             unresolvedTransferJournalCount = 0;
@@ -2018,14 +2246,22 @@ namespace DeferredReality.API
                 process.intervalTicks = Math.Max(1, process.intervalTicks);
                 RealityProcessPausePolicy.Normalize(process, RealityProviderRegistry.TryGet(process.providerId, out _));
             }
+            fidelityEscalations = fidelityEscalations.Where(item => item != null &&
+                !string.IsNullOrEmpty(item.requestId) && !string.IsNullOrEmpty(item.regionId) &&
+                !string.IsNullOrEmpty(item.providerId) && !string.IsNullOrEmpty(item.processId) &&
+                Enum.IsDefined(typeof(RealityFidelity), item.currentFidelity) &&
+                Enum.IsDefined(typeof(RealityFidelity), item.requestedFidelity) &&
+                RealityFidelityRules.IsHigher(item.requestedFidelity, item.currentFidelity) &&
+                Enum.IsDefined(typeof(RealityFidelityEscalationReason), item.reason) &&
+                Enum.IsDefined(typeof(RealityFidelityEscalationPolicy), item.policy) &&
+                Enum.IsDefined(typeof(RealityFidelityEscalationStatus), item.status)).ToList();
+            RepairUnique(fidelityEscalations, item => item?.requestId, "fidelity-escalation");
             RepairList(observations, item => item?.observationId, "observation");
-            mapAliases = mapAliases.Where(item => item != null && item.legacyMapId >= 0 && !string.IsNullOrEmpty(item.regionId)).ToList();
-            migrations = migrations.Where(item => item != null && !string.IsNullOrEmpty(item.providerId) && !string.IsNullOrEmpty(item.consumerId)).ToList();
             appliedOperations = appliedOperations.Where(item => item != null && !string.IsNullOrEmpty(item.operationId) &&
                 item.sequence >= -1).ToList();
-            RepairUnique(topology, item => item?.linkId, "topology");
-            RepairUnique(mapAliases, item => item == null ? null : item.legacyMapId.ToString(), "map-alias");
-            RepairUnique(migrations, item => item == null ? null : item.providerId + ":" + item.consumerId, "migration");
+            foreach (RealityGraphRepairIssue issue in graph.RepairAndIndex())
+                QuarantineInternal("connection", issue.connectionId, issue.ownerNamespace,
+                    issue.reason, issue.payload, Now);
             RepairUnique(appliedOperations, item => item?.operationId, "operation");
             operationWatermarks = operationWatermarks.Where(item => item != null && !string.IsNullOrEmpty(item.providerId) &&
                 !string.IsNullOrEmpty(item.kind) && !string.IsNullOrEmpty(item.domainId) &&
@@ -2046,7 +2282,6 @@ namespace DeferredReality.API
             RepairDuplicateExcursionPawns();
             conflicts = conflicts.Where(item => item != null && !string.IsNullOrEmpty(item.conflictId)).ToList();
             RepairUnique(conflicts, item => item?.conflictId, "conflict");
-            foreach (RealityMapAlias alias in mapAliases.OrderBy(item => item.legacyMapId)) if (!regionByLegacyMapId.ContainsKey(alias.legacyMapId)) regionByLegacyMapId[alias.legacyMapId] = alias.regionId;
             foreach (RealityAppliedOperation operation in appliedOperations) appliedOperationIds.Add(operation.operationId);
             adjacentMapById.Clear();
             foreach (RealityAdjacentMapRecord adjacentMap in adjacentMaps)
@@ -2074,8 +2309,22 @@ namespace DeferredReality.API
             CompactStorageInternal(Now);
             processById.Clear();
             foreach (RealityProcessRecord process in processes.Where(item => item != null && !string.IsNullOrEmpty(item.processId))) processById[process.processId] = process;
-            regionByLegacyMapId.Clear();
-            foreach (RealityMapAlias alias in mapAliases.OrderBy(item => item.legacyMapId)) if (!regionByLegacyMapId.ContainsKey(alias.legacyMapId)) regionByLegacyMapId[alias.legacyMapId] = alias.regionId;
+            fidelityEscalationById.Clear();
+            foreach (RealityFidelityEscalationRecord escalation in fidelityEscalations.Where(item => item != null && !string.IsNullOrEmpty(item.requestId)))
+                fidelityEscalationById[escalation.requestId] = escalation;
+            regionByProjectionMapId.Clear();
+            foreach (RealityRegionDescriptor region in regions.Where(item => item != null && item.projectionMapUniqueId >= 0)
+                .OrderBy(item => item.projectionMapUniqueId))
+            {
+                if (regionByProjectionMapId.ContainsKey(region.projectionMapUniqueId))
+                {
+                    region.authority = RealityRegionAuthority.Quarantined;
+                    QuarantineInternal("region-projection", region.regionId, "core",
+                        "Multiple regions claim the same live projection Map.uniqueID.", region.projectionMapUniqueId.ToString(), Now);
+                    continue;
+                }
+                regionByProjectionMapId[region.projectionMapUniqueId] = region.regionId;
+            }
             indexesReady = true;
             processScheduleCacheReady = false;
             EnsureProcessScheduleCache();
@@ -2379,33 +2628,10 @@ namespace DeferredReality.API
                 Enum.IsDefined(typeof(RealityExcursionStatus), value.status);
         }
 
-        /// <summary>Stable repair keeps the first serialized slot, replacing it only with an explicitly newer/versioned record.</summary>
+        /// <summary>Stable repair keeps the first serialized slot, replacing it only with an explicitly newer record.</summary>
         private static bool PreferDuplicate(object existing, object candidate)
         {
-            return RealityRepairPolicy.ShouldReplaceDuplicate(SchemaVersion(existing), SchemaVersion(candidate),
-                UpdateTick(existing), UpdateTick(candidate));
-        }
-
-        private static int SchemaVersion(object value)
-        {
-            if (value is RealityRegionDescriptor region) return region.schemaVersion;
-            if (value is RealityPopulationRecord population) return population.schemaVersion;
-            if (value is RealityAnchorRecord anchor) return anchor.schemaVersion;
-            if (value is RealityConstraint constraint) return constraint.schemaVersion;
-            if (value is RealityProcessRecord process) return process.schemaVersion;
-            if (value is RealityObservationRecord observation) return observation.schemaVersion;
-            if (value is RealityTopologyLink topology) return topology.schemaVersion;
-            if (value is RealityMapAlias alias) return alias.schemaVersion;
-            if (value is RealityMigrationMarker migration) return migration.schemaVersion;
-            if (value is RealityAppliedOperation operation) return operation.schemaVersion;
-            if (value is RealityConflictReport conflict) return conflict.schemaVersion;
-            if (value is RealityProviderPayload providerPayload) return providerPayload.schemaVersion;
-            if (value is RealityAdjacentMapRecord adjacentMap) return adjacentMap.schemaVersion;
-            if (value is RealityExcursionTicket excursion) return excursion.schemaVersion;
-            if (value is RealityMapCreationIntentRecord intent) return intent.schemaVersion;
-            if (value is RealityOperationRetentionWatermark watermark) return watermark.schemaVersion;
-            if (value is RealityAdjacentDiagnosticRecord diagnostic) return diagnostic.schemaVersion;
-            return 0;
+            return RealityRepairPolicy.ShouldReplaceDuplicate(UpdateTick(existing), UpdateTick(candidate));
         }
 
         private static long? UpdateTick(object value)
@@ -2416,8 +2642,6 @@ namespace DeferredReality.API
             if (value is RealityConstraint constraint) return constraint.createdTick;
             if (value is RealityProcessRecord process) return process.lastExecutionTick;
             if (value is RealityObservationRecord observation) return observation.tick;
-            if (value is RealityMapAlias alias) return alias.migratedTick;
-            if (value is RealityMigrationMarker migration) return migration.committedTick;
             if (value is RealityAppliedOperation operation) return operation.tick;
             if (value is RealityConflictReport conflict) return conflict.detectedTick;
             if (value is RealityAdjacentMapRecord adjacentMap) return adjacentMap.lastAccessTick;
@@ -2474,7 +2698,7 @@ namespace DeferredReality.API
             before = observations.Count;
             while (observations.Count > MaximumObservationHistory)
             {
-                RealityObservationRecord oldest = RealityRetentionPolicy.FindOldestObservation(observations);
+                RealityObservationRecord oldest = RealityRetentionPolicy.FindOldestDiscardableObservation(observations);
                 if (oldest == null) break;
                 observations.Remove(oldest);
                 observationById.Remove(oldest.observationId);
@@ -2520,10 +2744,11 @@ namespace DeferredReality.API
             before = adjacentDiagnostics.Count;
             adjacentDiagnostics = RealityRetentionPolicy.SelectResolvedAdjacentDiagnostics(adjacentDiagnostics, now).ToList();
             report.adjacentDiagnosticsRemoved = Math.Max(0, before - adjacentDiagnostics.Count);
-            report.mapAliasesRemoved = CompactMapAliases();
-            regionByLegacyMapId.Clear();
-            foreach (RealityMapAlias alias in mapAliases.Where(item => item != null).OrderBy(item => item.legacyMapId))
-                if (!regionByLegacyMapId.ContainsKey(alias.legacyMapId)) regionByLegacyMapId[alias.legacyMapId] = alias.regionId;
+            regionByProjectionMapId.Clear();
+            foreach (RealityRegionDescriptor region in regions.Where(item => item != null && item.projectionMapUniqueId >= 0)
+                .OrderBy(item => item.projectionMapUniqueId))
+                if (!regionByProjectionMapId.ContainsKey(region.projectionMapUniqueId))
+                    regionByProjectionMapId[region.projectionMapUniqueId] = region.regionId;
             unresolvedTransferJournalCount = transferJournals.Count(item =>
                 RealityRetentionPolicy.IsInterruptedTransfer(item) && !string.IsNullOrEmpty(item.excursionId));
             return report;
@@ -2607,12 +2832,7 @@ namespace DeferredReality.API
             if (regions.Any(region => region != null &&
                 (region.providerPayloads ?? new List<RealityProviderPayload>()).Any(payload => payload != null &&
                     (Contains(payload.payloadId, id) || Contains(payload.data, id))))) return true;
-            if (topology.Any(link => link != null &&
-                (Contains(link.linkId, id) || Contains(link.fromRegionId, id) || Contains(link.toRegionId, id) ||
-                 Contains(link.kind, id) || Contains(link.migrationFilter, id)))) return true;
-            if (topology.Any(link => link != null &&
-                (link.metadata ?? new List<RealityPayloadField>()).Any(field => field != null &&
-                    (Contains(field.key, id) || Contains(field.value, id))))) return true;
+            if (graph.References(id)) return true;
             if (populations.Any(population => population != null &&
                 (Contains(population.populationId, id) || Contains(population.providerId, id) || Contains(population.kind, id) ||
                  Contains(population.subjectId, id) || Contains(population.regionId, id) || Contains(population.demographicPayload, id) ||
@@ -2637,9 +2857,6 @@ namespace DeferredReality.API
                  Contains(constraint.affectedPopulationIds, id) || Contains(constraint.payload, id)))) return true;
             if (providerPayloads.Any(payload => payload != null &&
                 (Contains(payload.providerId, id) || Contains(payload.payloadId, id) || Contains(payload.data, id)))) return true;
-            if (mapAliases.Any(alias => alias != null && Contains(alias.regionId, id))) return true;
-            if (migrations.Any(marker => marker != null &&
-                (Contains(marker.providerId, id) || Contains(marker.consumerId, id) || Contains(marker.checksum, id)))) return true;
             if (quarantine.Any(item => item != null &&
                 (item.recordId == id || Contains(item.recordType, id) || Contains(item.providerId, id) ||
                  Contains(item.reason, id) || Contains(item.payload, id)))) return true;
@@ -2670,49 +2887,6 @@ namespace DeferredReality.API
                  Contains(conflict.constraintIds, id) || Contains(conflict.reason, id)));
         }
 
-        private int CompactMapAliases()
-        {
-            if (Find.Maps == null) return 0;
-            int before = mapAliases.Count;
-            mapAliases = mapAliases.Where(alias => alias != null && !CanRemoveMapAlias(alias)).ToList();
-            return before - mapAliases.Count;
-        }
-
-        private bool CanRemoveMapAlias(RealityMapAlias alias)
-        {
-            string legacyId = alias.legacyMapId.ToString();
-            if (Find.Maps.Any(map => map != null && map.uniqueID == alias.legacyMapId)) return false;
-            if (regions.Any(region => region != null && region.activeMapUniqueId == alias.legacyMapId)) return false;
-            if (transferJournals.Any(journal => journal != null && RealityRetentionPolicy.IsInterruptedTransfer(journal) &&
-                (journal.sourceRegionId == alias.regionId || journal.destinationRegionId == alias.regionId ||
-                  Contains(journal.transferId, legacyId) || Contains(journal.edge, legacyId) ||
-                  Contains(journal.pawnLoadIds, legacyId) || Contains(journal.diagnostic, legacyId)))) return false;
-            if (adjacentMaps.Any(marker => marker != null &&
-                (marker.mapUniqueId == alias.legacyMapId || marker.originMapUniqueId == alias.legacyMapId ||
-                 marker.regionId == alias.regionId || marker.originRegionId == alias.regionId))) return false;
-            if (excursions.Any(ticket => ticket != null &&
-                (ticket.originMapUniqueId == alias.legacyMapId || ticket.destinationMapUniqueId == alias.legacyMapId ||
-                  ticket.originRegionId == alias.regionId || ticket.destinationRegionId == alias.regionId))) return false;
-            if (mapCreationIntents.Any(intent => intent != null &&
-                (intent.preexistingMapUniqueId == alias.legacyMapId || intent.createdMapUniqueId == alias.legacyMapId ||
-                 intent.regionId == alias.regionId || intent.originRegionId == alias.regionId))) return false;
-            if (processes.Any(process => process != null && Contains(process.payload, legacyId))) return false;
-            if (constraints.Any(constraint => constraint != null &&
-                (Contains(constraint.payload, legacyId) || Contains(constraint.causalParentIds, legacyId) ||
-                 Contains(constraint.affectedAnchorIds, legacyId) || Contains(constraint.affectedPopulationIds, legacyId)))) return false;
-            if (providerPayloads.Any(payload => payload != null && Contains(payload.data, legacyId))) return false;
-            if (migrations.Any(marker => marker != null &&
-                (Contains(marker.providerId, legacyId) || Contains(marker.consumerId, legacyId) || Contains(marker.checksum, legacyId)))) return false;
-            if (appliedOperations.Any(operation => operation != null &&
-                (Contains(operation.operationId, legacyId) || Contains(operation.providerId, legacyId) || Contains(operation.kind, legacyId)))) return false;
-            if (conflicts.Any(conflict => conflict != null &&
-                (Contains(conflict.conflictId, legacyId) || Contains(conflict.regionId, legacyId) ||
-                 Contains(conflict.subjectId, legacyId) || Contains(conflict.constraintIds, legacyId) ||
-                 Contains(conflict.reason, legacyId)))) return false;
-            return !quarantine.Any(item => item != null &&
-                (item.recordId == legacyId || Contains(item.reason, legacyId) || Contains(item.payload, legacyId)));
-        }
-
         private static bool Contains(string value, string term)
         {
             return !string.IsNullOrEmpty(value) && !string.IsNullOrEmpty(term) && value.IndexOf(term, StringComparison.Ordinal) >= 0;
@@ -2734,21 +2908,20 @@ namespace DeferredReality.API
                 (providerId ?? string.Empty) + "\0" + (reason ?? string.Empty) + "\0" + (payload ?? string.Empty);
         }
 
-        private static float Clamp01(float value) => Math.Max(0f, Math.Min(1f, value));
+        private static float Clamp01(float value) => float.IsNaN(value) || float.IsInfinity(value)
+            ? 0f : Math.Max(0f, Math.Min(1f, value));
     }
 
     internal sealed class RealityWorldState
     {
         internal List<RealityRegionDescriptor> regions;
-        internal List<RealityTopologyLink> topology;
+        internal List<RealityRegionConnection> connections;
         internal List<RealityPopulationRecord> populations;
         internal List<RealityAnchorRecord> anchors;
         internal List<RealityConstraint> constraints;
         internal List<RealityProcessRecord> processes;
         internal List<RealityObservationRecord> observations;
         internal List<RealityProviderPayload> providerPayloads;
-        internal List<RealityMapAlias> mapAliases;
-        internal List<RealityMigrationMarker> migrations;
         internal List<RealityAppliedOperation> appliedOperations;
         internal List<RealityConflictReport> conflicts;
         internal List<RealityQuarantineRecord> quarantine;
@@ -2758,5 +2931,6 @@ namespace DeferredReality.API
         internal List<RealityMapCreationIntentRecord> mapCreationIntents;
         internal List<RealityAdjacentDiagnosticRecord> adjacentDiagnostics;
         internal List<RealityOperationRetentionWatermark> operationWatermarks;
+        internal List<RealityFidelityEscalationRecord> fidelityEscalations;
     }
 }

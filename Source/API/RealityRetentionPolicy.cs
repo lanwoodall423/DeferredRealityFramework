@@ -61,13 +61,6 @@ namespace DeferredReality.API
                 .ThenBy(journal => journal.transferId, StringComparer.Ordinal).ToList();
         }
 
-        public static bool CanExpireOperation(RealityProviderRegistration registration, string kind, long appliedTick, long now)
-        {
-            // A tick watermark or age is not a replay boundary. Keep this overload for
-            // source compatibility, but never authorize deletion without a sequence.
-            return false;
-        }
-
         /// <summary>Operation age is insufficient by itself; a matching persisted watermark must prove replay is impossible.</summary>
         public static bool CanExpireOperation(RealityProviderRegistration registration, RealityAppliedOperation operation,
             IEnumerable<RealityOperationRetentionWatermark> watermarks, long now)
@@ -162,6 +155,14 @@ namespace DeferredReality.API
             }
             return oldest;
         }
+
+        /// <summary>Finds the oldest observation that explicitly permits disappearance.</summary>
+        public static RealityObservationRecord FindOldestDiscardableObservation(
+            IEnumerable<RealityObservationRecord> observations)
+        {
+            return FindOldestObservation((observations ?? Enumerable.Empty<RealityObservationRecord>())
+                .Where(item => item != null && item.compressionSignificance == RealityCompressionSignificance.Disposable));
+        }
     }
 
     /// <summary>Counts the records removed by one conservative storage compaction pass.</summary>
@@ -173,13 +174,12 @@ namespace DeferredReality.API
         public int transferJournalsRemoved;
         public int appliedOperationsRemoved;
         public int cancelledProcessesRemoved;
-        public int mapAliasesRemoved;
         public int excursionsRemoved;
         public int retiredAdjacentMapsRemoved;
         public int adjacentDiagnosticsRemoved;
 
         public int TotalRemoved => quarantineRemoved + conflictsRemoved + observationsRemoved + transferJournalsRemoved +
-            appliedOperationsRemoved + cancelledProcessesRemoved + mapAliasesRemoved + excursionsRemoved +
+            appliedOperationsRemoved + cancelledProcessesRemoved + excursionsRemoved +
             retiredAdjacentMapsRemoved + adjacentDiagnosticsRemoved;
     }
 }

@@ -1,24 +1,35 @@
 # Save Format
 
 The framework stores one `DeferredRealityWorldComponent` under the world save.
-The root schema key is `deferredRealitySaveSchema`; the current root schema is
-`5`. All framework child records carry their own `schemaVersion`.
+The world component is the only RimWorld serialization owner. DRF has one current
+record shape rather than a root/child schema negotiation layer; there are no
+pre-release save migrations or compatibility aliases.
 
 ## Root collections
 
-- `deferredRealityRegions`: descriptors, fidelity, observations, environment, and provider blobs.
-- `deferredRealityTopology`: directed or conditional region links.
-- `deferredRealityPopulations`: aggregate objective populations and uncertainty.
-- `deferredRealityAnchors`: identity-bearing objects and typed provider payloads.
-- `deferredRealityConstraints`: unresolved outcomes and causal links.
+- `deferredRealityRegions`: durable region identity, latent fidelity, projection
+  authority/binding, observations, environment, and provider blobs.
+- `deferredRealityConnections`: persisted provider-neutral region graph
+  connections, including endpoint IDs, deterministic identity, direction,
+  semantic kind, traversal metadata, owner namespace, opaque payload, and
+  enabled/disabled lifecycle.
+- `deferredRealityPopulations`: fungible aggregate quantities and uncertainty;
+  records persist compression significance and retained anchor membership.
+- `deferredRealityAnchors`: identity-bearing objects, compression significance,
+  provider-resolved external-reference state, and typed provider payloads.
+- `deferredRealityConstraints`: established/disposable facts, unresolved
+  outcomes, and causal links.
 - `deferredRealityProcesses`: scheduled analytical processes.
-- `deferredRealityObservations`: bounded player/sensor/inferred evidence history.
-- `deferredRealityProviderPayloads`: explicitly opaque, versioned provider blobs.
-- `deferredRealityMapAliases`: legacy `Map.uniqueID` to stable region aliases.
-- `deferredRealityMigrations`: idempotent provider migration markers.
+- `deferredRealityFidelityEscalations`: durable typed requests for processes
+  that need more detail than their current fidelity provides.
+- `deferredRealityObservations`: player/sensor/inferred evidence history with
+  explicit compression significance. Only `Disposable` observations are
+  eligible for age/cap eviction.
+- `deferredRealityProviderPayloads`: explicitly opaque provider blobs owned by the
+  provider namespace.
 - `deferredRealityAppliedOperations`: exactly-once mutation IDs with optional
-  provider/domain sequence values. A negative sequence is a legacy operation-ID-only
-  marker and is never made compactable by migration.
+  provider/domain sequence values. A negative sequence is an operation-ID-only
+  marker and is never made compactable without an explicit replay-safety proof.
 - `deferredRealityConflicts`: explicit incompatible-fact reports.
 - `deferredRealityQuarantine`: invalid, missing-Def, missing-provider, or duplicate records.
 - `deferredRealityTransferJournals`: save-safe adjacent transfer transactions.
@@ -32,33 +43,45 @@ The root schema key is `deferredRealitySaveSchema`; the current root schema is
   that markers at or below a durable replay boundary are safe to compact. Sequence
   domains persist `sequenceCursor`, `allowGaps`, and a nonempty proof.
 
-Process records added in root schema 2 contain `pauseReason` and `cancelledTick`.
-Missing fields from older saves default to `None` and `-1`. A paused legacy
-process is repaired as `Manual` when its provider is present and as
-`ProviderUnavailable` when its provider is absent. The runtime scheduler cache
-is not serialized; it is rebuilt after load.
+Process records contain `pauseReason` and `cancelledTick`. The runtime scheduler
+cache is not serialized; it is rebuilt after load.
 
-`Map.uniqueID` is only stored in an alias or active-map link. A latent region ID
-never depends on it. Region IDs round-trip as `rr1|...` strings and include tile,
+Region records store one of the four fidelities: `Dormant` (durable facts with
+no recurring simulation), `Statistical` (aggregate analytical evolution),
+`Narrative` (bounded abstract events), or `Materialized` (spatial resolution).
+Authority is separate: `Latent`, `Materializing`, `LiveProjection`,
+`Compressing`, or `Quarantined`. A normal live projection pairs
+`Materialized` fidelity with `LiveProjection` authority.
+
+`Map.uniqueID` is only stored as the projection binding for a region. A latent
+region ID never depends on it. Region IDs round-trip as `rr1|...` strings and include tile,
 layer, local slot, instance, parent, and provider namespace.
+
+Regions describe places. Connections describe topology. Transfers/processes
+describe changes across topology. Connection records are not transfer journals,
+materialization intents, or process effects.
+
+Fidelity escalation records link a process and region to a typed request for a
+higher fidelity. They persist current/requested fidelity, reason, subject,
+provider policy, status, attempts, and diagnostics. Pending or approved requests
+pause the process until a host/provider resolves them; declined or failed
+requests remain inspectable. Approval never creates a map automatically.
+Materialization must explicitly satisfy an approved request, and compression
+reconciles live state back to latent `Statistical` state.
 
 An adjacent marker's `regionId` identifies the represented region and retains its
 own namespace, commonly `core` for `Surface(tile)`. Its `providerId` separately
 identifies the integration that owns the temporary site and its lifecycle. A
-provider-owned adjacent site may therefore represent a `core` surface region;
-old markers missing the newer transaction field remain valid without namespace
-rewriting.
+provider-owned adjacent site may therefore represent a `core` surface region.
 
 Map creation intents persist the materialization transaction, expected region,
 adjacent owner, origin, creation tick, lifecycle, and pre-existing/created map
 IDs. A readiness callback may classify a map only when the intent, provider
 identity claim, tile, and map ID agree. Unbound or conflicting intents are
-retained or quarantined rather than guessed. Missing intent collections from
-schema 3/4 missing intent, diagnostic, and watermark collections load as empty. New
-adjacent fields default to empty strings or `-1` without rewriting the represented
-region namespace.
+retained or quarantined rather than guessed. Null collections are repaired to
+empty during post-load initialization; map-ID alias matching is never attempted.
 
-## Migration and resilience
+## Load repair and resilience
 
 Loading repairs null lists and duplicate IDs deterministically while retaining an
 audit quarantine record. Unknown provider data is preserved as a string blob.
@@ -66,18 +89,25 @@ Missing Defs do not erase a population or anchor. Missing providers suspend thei
 processes without changing payload, execution count, deterministic epoch, or
 overdue timing; registration resumes only those `ProviderUnavailable` processes.
 Manual, provider-failure, and provider-requested pauses require explicit resume.
-A provider-specific migration is committed only after all imported records
-validate; repeating a load is safe.
+There is no framework-wide pre-release save migration layer. Providers may import
+their own current map-component state during projection registration, but the
+framework never infers region identity from an old map-ID alias.
+
+Connection repair validates both endpoint `RealityRegionId` values and the
+canonical deterministic connection ID. Invalid records and duplicate IDs are
+quarantined; the first valid serialized connection is retained. Missing provider
+registrations do not remove connection records.
 
 Constraints may persist optional `conflictDomainKeys` and `conflictFacetKeys`.
-Missing lists default to empty, preserving legacy fallback matching. A legacy
-constraint without keys uses provider/type plus subject, facet, or region as its
-conservative domain. Duplicate repair retains the first serialized valid record;
-an explicit higher `schemaVersion` or newer update tick may replace that value in
-the first slot, and the displaced duplicate is quarantined.
+When a provider omits them, the current resolver derives a deterministic
+conservative domain from provider/type plus subject, facet, or region. Duplicate
+repair retains the first serialized valid record; an explicit newer update tick
+may replace that value in the first slot, and the displaced duplicate is
+quarantined.
 
-Storage compaction is conservative and deterministic. Observation history is
-bounded at 8192 records, quarantine at 4096 unique records, and conflicts at
+Storage compaction is conservative and deterministic. Disposable observation
+history is bounded at 8192 records; established observations are protected even
+when that cap is reached. Quarantine is capped at 4096 unique records and conflicts at
 2048 unique reports. Terminal transfer journals are retained for 600000 ticks
 and capped at 256 newest terminal records; interrupted journals are always
 retained. Exactly-once operation markers remain durable unless the provider declares
@@ -87,7 +117,7 @@ accepts a greater sequence but still rejects every sequence at or below the curs
 The operation is validated against that cursor before population mutation, and the
 cursor advances only after the marker and state commit. A marker is removed only
 when its sequence is at or below a persisted cursor with a nonempty proof and the
-retention age has elapsed. Age, aggregate population values, legacy operation IDs,
+retention age has elapsed. Age, aggregate population values, operation-ID-only markers,
 and old tick-only watermarks are never replay-safety proof. Providers without a
 proven sequence boundary retain markers indefinitely.
 Terminal excursions are retained for 600000 ticks with a deterministic 1024-record
@@ -97,8 +127,8 @@ quarantined, blocked, interrupted, and cancelled tickets awaiting exact return a
 never compacted; recovery references override age and cap selection. Storage maintenance is dirty/coarse
 rather than a full scan after every operation or transfer-journal mutation; save
 and post-load repair still force maintenance.
-Cancelled processes and map aliases are removed only with the corresponding
-provider policy and no persisted recovery reference.
+Cancelled processes are removed only with the corresponding provider policy and
+no persisted recovery reference.
 
 Interrupted adjacent transfers remain journaled; completed IDs are idempotent and
 incomplete transactions are recovered or rolled back only through the registered
@@ -131,12 +161,7 @@ eviction is recency ordered and requires returned Pawns, no player
 or recovery references, successful provider compression, and a real registered map
 factory removal.
 
-Legacy provider keys remain owned by their original assemblies. A consuming
-provider adapter may import them into new records, but the framework does not
-rewrite or delete provider-owned collections.
-
-Map aliases are authoritative migration records. A live map with no persisted
-alias is automatically assigned `Surface(tile)` only when it is an unambiguous
-standard surface map. Provider claims are required for custom layers and other
-nonstandard maps; conflicting or missing claims are quarantined without changing
-an existing active-map identity.
+Provider-owned payload keys remain opaque to the framework. A live map is bound
+only after an explicit provider identity claim (or the unambiguous standard
+surface fallback), and conflicting or missing claims are quarantined without
+changing an existing projection binding.
