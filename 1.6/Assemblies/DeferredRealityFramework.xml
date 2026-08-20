@@ -1436,8 +1436,5 @@
             explicit update tick proves it newer; otherwise serialized order is authoritative.
             </summary>
         </member>
-        <member name="T:DeferredReality.Testing.DeferredRealityInGameTestComponent">
-            <summary>Runs the framework's provider-neutral live-world checks after a DevBridge quicktest map is ready.</summary>
-        </member>
     </members>
 </doc>

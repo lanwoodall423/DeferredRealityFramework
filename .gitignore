@@ -7,6 +7,9 @@
 # IDE and local tooling state.
 .vs/
 .idea/
+.rimctx/
+.rimdev/profiles/
+.rimdev/validation-proofs/
 *.user
 *.suo
 *.userosscache

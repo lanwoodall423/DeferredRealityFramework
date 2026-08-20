@@ -21,8 +21,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Adapters\**" />
+    <Compile Remove="bin\**;obj\**" />
     <EmbeddedResource Remove="Adapters\**" />
+    <EmbeddedResource Remove="bin\**;obj\**" />
     <None Remove="Adapters\**" />
+    <None Remove="bin\**;obj\**" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Assembly-CSharp">

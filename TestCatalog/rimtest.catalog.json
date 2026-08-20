@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "rimtest-catalog/v1",
+  "tests": [
+    {
+      "id": "deferred-reality-in-game-smoke",
+      "description": "Verify that the Deferred Reality Dev Quicktest map is ready through RimTest.",
+      "recipe": "deferred-reality-development-smoke",
+      "artifactFreshnessAnchor": true,
+      "cost": "medium",
+      "tags": ["deferred-reality", "in-game", "smoke"]
+    }
+  ],
+  "suites": [
+    {
+      "id": "smoke",
+      "description": "RimTest-managed Deferred Reality in-game smoke validation.",
+      "tests": ["deferred-reality-in-game-smoke"]
+    }
+  ]
+}
