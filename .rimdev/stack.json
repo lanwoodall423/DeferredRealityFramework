@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "rimdev-stack/v1",
+  "project": "DeferredRealityFramework",
+  "devBridgeProject": "deferred-reality",
+  "catalog": "TestCatalog/rimtest.catalog.json",
+  "fallbackSuite": "smoke",
+  "rimBridge": "via-devbridge"
+}

@@ -55,23 +55,13 @@ Focused checks cover:
 - verify active versus terminal ticket indexing and recoverable cancelled tickets;
 - verify provider task cleanup occurs only after terminal recovery is complete.
 
-## Automatic in-game checks
+## In-game checks
 
-When DevBridge2 launches RimWorld with `-quicktest`, it supplies a launch ID.
-The framework's `DeferredRealityInGameTestComponent` waits for a playable map,
-then runs the provider-neutral live-world suite automatically on the RimWorld
-main thread. It checks world/map lifecycle registration, stable map identity,
-diagnostics repeatability, audit errors, provider registration IDs, adjacent
-ownership and construction guards, adjacent diagnostics, active excursion
-ownership, map-creation intents, and that read-only diagnostics do not mutate
-the world.
-
-The suite is owned by this mod. It does not ask DevBridge to inspect game state,
-create maps, transfer Pawns, or judge results. The latest machine-readable report
-is written to `TestResults/DeferredReality.InGameTests.json` and every case is
-also emitted to the RimWorld log. `DEFERRED_REALITY_AUTO_TESTS=1` can opt into
-the same runner for a non-DevBridge launch; the DevBridge launch ID is the normal
-automatic trigger.
+RimTest owns in-game test selection and execution through the `smoke` suite in
+`TestCatalog/rimtest.catalog.json`. Its `quicktest-smoke` recipe delegates
+readiness and lifecycle to DevBridge2; the framework has no embedded
+GameComponent runner, environment-variable trigger, or runtime JSON result
+transport.
 
 Provider-owned map creation, Pawn transfer, construction attempts on a marked
 site, and save/load during outbound and return remain outside this framework-only
@@ -132,7 +122,6 @@ eviction APIs; they do not fake provider map creation, save/load, or deinitializ
 9. Create same-tile identities and verify ambiguous claims never overwrite a
    projection. Force partial `Prepare` and verify reverse compensation.
 
-This checkout has no automated live-world harness. The above runtime cases were
-not executed by the pure test process; they require a consuming provider's test
-environment and actual RimWorld/Scribe save/load. Adjacent regions remain disabled
-by default and are not production-ready until this checklist passes in-game.
+The above runtime cases require a consuming provider's test environment and
+actual RimWorld/Scribe save/load. Adjacent regions remain disabled by default and
+are not production-ready until this checklist passes in-game.
