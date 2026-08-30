@@ -4,5 +4,20 @@
   "devBridgeProject": "deferred-reality",
   "catalog": "TestCatalog/rimtest.catalog.json",
   "fallbackSuite": "smoke",
-  "rimBridge": "via-devbridge"
+  "rimBridge": "via-devbridge",
+  "workload": "production",
+  "projectType": "rimworld-content-mod",
+  "packageId": "lan.deferredreality.framework",
+  "sourceProject": "Source/DeferredRealityFramework.csproj",
+  "configuration": "Release",
+  "expectedAssembly": "DeferredRealityFramework.dll",
+  "deploymentTarget": "1.6/Assemblies/DeferredRealityFramework.dll",
+  "testRecipe": "deferred-reality-development-smoke",
+  "testRecipePath": ".rimdev/recipes/deferred-reality-development-smoke.json",
+  "runtimePackage": {
+    "sourceRoot": ".",
+    "include": ["About/**", "LoadFolders.xml", "1.*/**"],
+    "exclude": [".rimdev/**", ".rimctx/**", "Source/**", "bin/**", "obj/**", "artifacts/**", "diagnostics/**", "evidence/**"]
+  },
+  "dependencies": []
 }
