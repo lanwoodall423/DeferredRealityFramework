@@ -44,7 +44,7 @@ $expectedPackageDirectories = @(
     '1.6'
     $expectedRuntimeDirectories
 ) | Sort-Object
-$packageName = "DeferredRealityFramework-v$Version"
+$packageName = "DeferredRealityFramework-$Version"
 $topLevelDirectory = 'DeferredRealityFramework'
 $stagingPath = Join-Path $OutputRoot $topLevelDirectory
 $zipPath = Join-Path $OutputRoot ($packageName + '.zip')
