@@ -37,3 +37,28 @@ not release evidence.
 
 Provider gameplay, active maps, Pawn transfer, and provider-specific rollback
 remain the responsibility of consuming repositories.
+
+## Installation
+
+Install Harmony first, then extract the
+`DeferredRealityFramework-0.1.0-rc.1.zip` archive's `DeferredRealityFramework`
+folder into RimWorld 1.6's `Mods` directory. Enable DRF after Harmony and
+before any consuming mod that lists DRF as a dependency. See the
+[README installation instructions](README.md#installation).
+
+## Project and license
+
+- Repository: [DeferredRealityFramework on GitHub](https://github.com/lanwoodall423/DeferredRealityFramework)
+- License: [LICENSE](LICENSE)
+
+## Qualification summary
+
+The qualified `DeferredRealityFramework.dll` passed source build, static
+validation, fresh deployment, artifact-freshness verification, and the
+`deferred-reality-in-game-smoke` runtime test on RimWorld 1.6. The package
+contains the qualified framework binary; no full stable live acceptance matrix
+is claimed for this release candidate.
+
+See [Architecture](ARCHITECTURE.md), [Save Format](SAVE_FORMAT.md),
+[Compatibility](COMPATIBILITY.md), and [Provider Guide](PROVIDER_GUIDE.md) for
+the public contracts and integration boundaries.

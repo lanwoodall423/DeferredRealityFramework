@@ -19,6 +19,8 @@ $requiredRootFiles = @(
     'LoadFolders.xml'
     'LICENSE'
     'README.md'
+    'ARCHITECTURE.md'
+    'SAVE_FORMAT.md'
     'PROVIDER_GUIDE.md'
     'COMPATIBILITY.md'
     'RELEASE_NOTES.md'
@@ -43,9 +45,10 @@ $expectedPackageDirectories = @(
     $expectedRuntimeDirectories
 ) | Sort-Object
 $packageName = "DeferredRealityFramework-v$Version"
-$stagingPath = Join-Path $OutputRoot $packageName
+$topLevelDirectory = 'DeferredRealityFramework'
+$stagingPath = Join-Path $OutputRoot $topLevelDirectory
 $zipPath = Join-Path $OutputRoot ($packageName + '.zip')
-$checksumPath = Join-Path $OutputRoot ($packageName + '.zip.sha256')
+$checksumPath = Join-Path $OutputRoot 'SHA256SUMS.txt'
 $runtimeRoot = Join-Path $root '1.6'
 $assemblyPath = Join-Path $runtimeRoot 'Assemblies\DeferredRealityFramework.dll'
 $checks = New-Object System.Collections.Generic.List[object]
@@ -117,9 +120,10 @@ try {
     Add-Check 'source-identity' $sourceIdentityMatches (
         "$sourceAssemblyVersion / $sourceFileVersion / $sourceInformationalVersion"
     )
-    Add-Check 'version-source-match' (
-        $Version -eq $expectedVersion -and $Version + '.0' -eq $expectedAssemblyVersion
-    ) ("package version $Version must match the authoritative framework identity")
+$semanticVersion = ($Version -split '-', 2)[0]
+Add-Check 'version-source-match' (
+    $Version -eq $expectedVersion -and $semanticVersion + '.0' -eq $expectedAssemblyVersion
+) ("package version $Version must match the authoritative framework identity")
 
     $assemblyExists = Test-Path -LiteralPath $assemblyPath -PathType Leaf
     Add-Check 'runtime-assembly' $assemblyExists $assemblyPath
@@ -156,23 +160,28 @@ try {
     }
     Add-Check 'load-folders-content' $loadFoldersContentValid 'valid LoadFolders.xml with a 1.6 load folder'
     $aboutContentValid = $false
+    $aboutVersionMatches = $false
     if ($aboutExists) {
         try {
             $about = [xml](Get-Content -LiteralPath $aboutPath -Raw)
             $nameNode = $about.SelectSingleNode('/ModMetaData/name')
             $packageIdNode = $about.SelectSingleNode('/ModMetaData/packageId')
+            $aboutVersionNode = $about.SelectSingleNode('/ModMetaData/modVersion')
             $aboutContentValid = (
                 $null -ne $nameNode -and -not [string]::IsNullOrWhiteSpace($nameNode.InnerText) -and
                 $null -ne $packageIdNode -and $packageIdNode.InnerText -eq 'lan.deferredreality.framework' -and
                 $null -ne $about.SelectSingleNode('/ModMetaData/supportedVersions/li[. = "1.6"]') -and
                 $null -ne $about.SelectSingleNode('/ModMetaData/modDependencies/li/packageId[. = "brrainz.harmony"]')
             )
+            $aboutVersionMatches = $null -ne $aboutVersionNode -and $aboutVersionNode.InnerText -eq $Version
         }
         catch {
             $aboutContentValid = $false
+            $aboutVersionMatches = $false
         }
     }
     Add-Check 'about-content' $aboutContentValid 'valid About.xml with non-empty name, package identity, 1.6 support, and brrainz.harmony dependency'
+    Add-Check 'about-version-match' $aboutVersionMatches "About.xml modVersion must be $Version"
 
     $runtimeFilesOnDisk = @()
     $runtimeDirectoriesOnDisk = @()
@@ -233,7 +242,7 @@ try {
     $entryNames = New-Object System.Collections.Generic.List[string]
     foreach ($stagingFile in $stagingFiles) {
         $relative = Get-StagingRelativePath $stagingFile.FullName
-        $entryNames.Add(($packageName + '/' + $relative))
+        $entryNames.Add(($topLevelDirectory + '/' + $relative))
     }
 
     $zipStream = [IO.File]::Open($zipPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
@@ -242,7 +251,7 @@ try {
         $fixedTime = [DateTimeOffset]::Parse('2000-01-01T00:00:00Z')
         foreach ($stagingFile in $stagingFiles) {
             $relative = Get-StagingRelativePath $stagingFile.FullName
-            $entry = $archive.CreateEntry(($packageName + '/' + $relative), [IO.Compression.CompressionLevel]::Optimal)
+            $entry = $archive.CreateEntry(($topLevelDirectory + '/' + $relative), [IO.Compression.CompressionLevel]::Optimal)
             $entry.LastWriteTime = $fixedTime
             $input = [IO.File]::OpenRead($stagingFile.FullName)
             $output = $entry.Open()
@@ -273,6 +282,8 @@ try {
     $forbiddenEntries = @($actualEntries | Where-Object { $_ -match '(^|/)(Source|Tests|TestCatalog|DevTools|BridgeAdapters|BridgeAdapter|\.rimdev|\.rimctx|\.github|artifacts|diagnostics|evidence)(/|$)|(^|/)(AGENTS\.md|\.pdb)$' })
     Add-Check 'package-development-boundary' ($forbiddenEntries.Count -eq 0) $(if ($forbiddenEntries.Count -eq 0) { 'no development-only files' } else { $forbiddenEntries -join '; ' })
     Add-Check 'package-created' (Test-Path -LiteralPath $zipPath -PathType Leaf) $zipPath
+    $zipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath $checksumPath -Value ($zipHash + '  ' + [IO.Path]::GetFileName($zipPath)) -Encoding ascii -NoNewline
 
     $status = if ($failures.Count -eq 0) { 'PASS' } else { 'FAIL' }
     if ($status -eq 'FAIL') {

@@ -20,16 +20,19 @@ documented 0.1.x compatibility baseline. Provider IDs, persisted identifiers,
 and provider contracts are public integration boundaries; downstream providers
 remain responsible for their own gameplay and live acceptance coverage.
 
-For the complete release scope, compatibility details, and consumer setup, see
-the [Release Notes](RELEASE_NOTES.md), [Compatibility](COMPATIBILITY.md), and
-[Provider Guide](PROVIDER_GUIDE.md).
+For the complete release scope, compatibility details, architecture, save-format
+rules, and consumer setup, see the [Release Notes](RELEASE_NOTES.md),
+[Architecture](ARCHITECTURE.md), [Compatibility](COMPATIBILITY.md),
+[Save Format](SAVE_FORMAT.md), and [Provider Guide](PROVIDER_GUIDE.md).
+The project repository is [DeferredRealityFramework on GitHub](https://github.com/lanwoodall423/DeferredRealityFramework);
+the distribution license is [LICENSE](LICENSE).
 
 
 ## Installation
 
 1. Install Harmony (`brrainz.harmony`) and place it before DRF in RimWorld's mod list.
-2. Download the versioned DRF ZIP from the release and extract its
-   `DeferredRealityFramework-v0.1.0-rc.1` folder into the game's `Mods` directory.
+2. Download `DeferredRealityFramework-0.1.0-rc.1.zip` from the release and
+   extract its `DeferredRealityFramework` folder into the game's `Mods` directory.
 3. Enable **Deferred Reality Framework** after Harmony.
 4. Enable a consuming mod that lists DRF as a dependency.
 
