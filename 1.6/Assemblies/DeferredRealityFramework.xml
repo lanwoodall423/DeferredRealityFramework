@@ -4,8 +4,32 @@
         <name>DeferredRealityFramework</name>
     </assembly>
     <members>
+        <member name="T:DeferredReality.API.DeferredRealityFrameworkInfo">
+            <summary>Authoritative framework release and provider-contract identity.</summary>
+        </member>
+        <member name="F:DeferredReality.API.DeferredRealityFrameworkInfo.Version">
+            <summary>Semantic framework version for this release candidate.</summary>
+        </member>
+        <member name="F:DeferredReality.API.DeferredRealityFrameworkInfo.AssemblyVersion">
+            <summary>CLR assembly version used for binary compatibility.</summary>
+        </member>
+        <member name="F:DeferredReality.API.DeferredRealityFrameworkInfo.SupportedProviderApiVersion">
+            <summary>Provider registration API version supported by this framework.</summary>
+        </member>
+        <member name="P:DeferredReality.API.DeferredRealityFrameworkInfo.InformationalVersion">
+            <summary>Assembly informational version, including build identity.</summary>
+        </member>
+        <member name="P:DeferredReality.API.DeferredRealityFrameworkInfo.BuildIdentity">
+            <summary>Exact release or development identity exposed by the built assembly.</summary>
+        </member>
+        <member name="P:DeferredReality.API.DeferredRealityFrameworkInfo.IsDevelopmentBuild">
+            <summary>Whether this assembly was built as a development build.</summary>
+        </member>
         <member name="T:DeferredReality.API.RealityProviderRegistration">
             <summary>Registration metadata for a provider.</summary>
+        </member>
+        <member name="F:DeferredReality.API.RealityProviderRegistration.semanticApiVersion">
+            <summary>Provider registration API version; the registry accepts only the framework-supported version.</summary>
         </member>
         <member name="F:DeferredReality.API.RealityProviderRegistration.supportedFidelities">
             <summary>Fidelities this provider can represent for its regions.</summary>

@@ -39,7 +39,7 @@ namespace DeferredReality.API
             registration.providerId = registration.providerId.Trim();
             if (registration.semanticApiVersion != DeferredRealityFrameworkInfo.SupportedProviderApiVersion)
             {
-                Log.Error("[DeferredReality] Provider '" + registration.providerId +
+                ReportRegistrationError("[DeferredReality] Provider '" + registration.providerId +
                     "' requested unsupported semantic API version " + registration.semanticApiVersion +
                     "; supported version is " + DeferredRealityFrameworkInfo.SupportedProviderApiVersion +
                     ". Registration rejected.");
@@ -52,7 +52,7 @@ namespace DeferredReality.API
             if (ProvidersById.TryGetValue(registration.providerId, out RegisteredProvider existing) &&
                 existing?.Provider != null && existing.Provider.GetType() != provider.GetType())
             {
-                Log.Error("[DeferredReality] Provider ID " + registration.providerId +
+                ReportRegistrationError("[DeferredReality] Provider ID " + registration.providerId +
                     " was already registered by " + existing.Provider.GetType().FullName +
                     "; refusing a conflicting provider installation " + provider.GetType().FullName + ".");
                 return false;
@@ -142,6 +142,12 @@ namespace DeferredReality.API
                 Log.ErrorOnce("Deferred Reality provider registration failed for " + registered.Registration.providerId + ": " + exception,
                     RealityDeterminism.StableHash("provider-register:" + registered.Registration.providerId));
             }
+        }
+
+        private static void ReportRegistrationError(string message)
+        {
+            try { Log.Error(message); }
+            catch (System.Security.SecurityException) { }
         }
 
         private static List<string> Normalize(IEnumerable<string> values)
