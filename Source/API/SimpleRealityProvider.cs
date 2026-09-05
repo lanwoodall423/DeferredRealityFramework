@@ -111,7 +111,7 @@ namespace DeferredReality.API
             {
                 providerId = providerId.Trim(),
                 displayName = displayName ?? providerId.Trim(),
-                semanticApiVersion = 1,
+                semanticApiVersion = DeferredRealityFrameworkInfo.SupportedProviderApiVersion,
                 defaultFidelity = RealityFidelity.Dormant,
                 supportedFidelities = RealityFidelityMask.All
             };

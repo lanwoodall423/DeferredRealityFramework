@@ -1,9 +1,15 @@
 # Save Format
 
 The framework stores one `DeferredRealityWorldComponent` under the world save.
-The world component is the only RimWorld serialization owner. DRF has one current
-record shape rather than a root/child schema negotiation layer; there are no
-pre-release save migrations or compatibility aliases.
+The world component is the only RimWorld serialization owner. DRF has one
+current record shape rather than a root/child schema negotiation layer. There
+is no explicit root schema number, pre-release migration layer, or compatibility
+alias table.
+
+`v0.1.0-rc.1` freezes this current record shape as the first public compatibility
+baseline. A save from a pre-release build is supported only when it already
+uses the same current field names and record types; DRF does not claim support
+for historical schema 3/4/5 labels or infer migrations for them.
 
 ## Root collections
 
@@ -89,9 +95,9 @@ Missing Defs do not erase a population or anchor. Missing providers suspend thei
 processes without changing payload, execution count, deterministic epoch, or
 overdue timing; registration resumes only those `ProviderUnavailable` processes.
 Manual, provider-failure, and provider-requested pauses require explicit resume.
-There is no framework-wide pre-release save migration layer. Providers may import
-their own current map-component state during projection registration, but the
-framework never infers region identity from an old map-ID alias.
+Providers may import their own current map-component state during projection
+registration. That provider-owned import does not alter the DRF record shape;
+the framework never infers region identity from an old map-ID alias.
 
 Connection repair validates both endpoint `RealityRegionId` values and the
 canonical deterministic connection ID. Invalid records and duplicate IDs are

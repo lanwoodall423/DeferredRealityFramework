@@ -1,10 +1,10 @@
 # Manual Acceptance Report
 
-Status: `RELEASE CANDIDATE - LIVE EXECUTION REQUIRED`
+Status: `NOT ACCEPTED — LIVE EXECUTION REQUIRED`
 
-This report intentionally records no live RimWorld result unless a game log or
-direct observation is attached. The current repository validation had no live
-RimWorld execution.
+This report records no manual acceptance pass. It records no live RimWorld
+result unless a game log or direct observation is attached. The current
+repository validation had no live RimWorld execution.
 
 | Check | Repository | Mode | Evidence | Result | Remaining action |
 |---|---|---|---|---|---|
@@ -21,11 +21,33 @@ RimWorld execution.
 | Safe eviction and vetoed eviction | DRF + provider | Manual | No live log | UNEXECUTED | Verify real deinitialization and veto retention |
 | Same-tile identity conflicts and partial-Prepare rollback | DRF + provider | Debug/manual | Pure seams only | UNEXECUTED | Run live map and provider failure cases |
 
+## Stable Runtime Qualification
+
+Status: `INFRASTRUCTURE BLOCKED` for the current release-candidate gate.
+
+The current gate did not create a runtime workflow. Its owner-managed readiness
+check returned:
+
+- `rimliaison doctor --json`: `status=blocked`
+- `code=PRODUCTION_TOOLCHAIN_ARTIFACT_MISSING`
+- `nextAction=Repair or reinstall the unified promoted production package`
+- `evaluationStatus=NOT_EVALUATED`
+
+The checked-in build artifact is not release-candidate evidence:
+
+- Version: assembly `0.1.0.0`, file `0.1.0.0`, informational `0.1.0`
+- Required replacement: rebuild from the release-candidate source identity
+
+No current startup, save/reload, or gameplay evidence is claimed. No product
+failure is inferred from the owner-tool infrastructure block.
+
 ## Automated Evidence
 
 - `DevTools/Check-RepositoryIntegrity.ps1`: structured PASS.
-- `DevTools/Build-All.ps1`: framework and pure tests built; pure tests passed.
-- `DevTools/Audit-Outputs.ps1`: structured PASS.
+- `DevTools/Build-All.ps1`: BLOCKED; RimWorld 1.6 assemblies are unavailable.
+- `DevTools/Run-PureTests.ps1`: BLOCKED by the same missing dependencies.
+- `DevTools/Audit-Outputs.ps1`: FAIL; the checked-in assembly still reports
+  informational version `0.1.0` and must be rebuilt.
 - Provider adapter builds and provider-specific runtime tests remain the
   responsibility of consuming repositories.
 

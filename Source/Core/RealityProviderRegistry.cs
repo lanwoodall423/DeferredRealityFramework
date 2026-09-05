@@ -8,8 +8,14 @@ namespace DeferredReality.API
     /// <summary>Capability-based provider registry. Internal collections are never exposed.</summary>
     public static class RealityProviderRegistry
     {
-        private static readonly Dictionary<string, IRealityProvider> ProvidersById =
-            new Dictionary<string, IRealityProvider>(StringComparer.Ordinal);
+        private sealed class RegisteredProvider
+        {
+            public IRealityProvider Provider;
+            public RealityProviderRegistration Registration;
+        }
+
+        private static readonly Dictionary<string, RegisteredProvider> ProvidersById =
+            new Dictionary<string, RegisteredProvider>(StringComparer.Ordinal);
         private static int revision;
 
         /// <summary>Registration revision for cache invalidation.</summary>
@@ -18,45 +24,68 @@ namespace DeferredReality.API
         /// <summary>Registers or replaces a provider with the same stable ID.</summary>
         public static bool Register(IRealityProvider provider)
         {
-            if (provider?.Registration == null || string.IsNullOrWhiteSpace(provider.Registration.providerId)) return false;
+            RealityProviderRegistration registration = provider?.Registration?.Clone();
+            if (registration == null || string.IsNullOrWhiteSpace(registration.providerId)) return false;
             if (!RealityThreadGuard.IsMainThread)
             {
-                LongEventHandler.ExecuteWhenFinished(() => Register(provider));
+                LongEventHandler.ExecuteWhenFinished(() => Register(provider, registration));
                 return true;
             }
-            RealityProviderRegistration registration = provider.Registration;
+            return Register(provider, registration);
+        }
+
+        private static bool Register(IRealityProvider provider, RealityProviderRegistration registration)
+        {
             registration.providerId = registration.providerId.Trim();
-            if (ProvidersById.TryGetValue(registration.providerId, out IRealityProvider existing) && existing != null &&
-                existing.GetType() != provider.GetType())
+            if (registration.semanticApiVersion != DeferredRealityFrameworkInfo.SupportedProviderApiVersion)
             {
-                Log.Error("[DeferredReality] Provider ID " + registration.providerId +
-                    " was already registered by " + existing.GetType().FullName +
-                    "; refusing a conflicting provider installation " + provider.GetType().FullName + ".");
+                Log.Error("[DeferredReality] Provider '" + registration.providerId +
+                    "' requested unsupported semantic API version " + registration.semanticApiVersion +
+                    "; supported version is " + DeferredRealityFrameworkInfo.SupportedProviderApiVersion +
+                    ". Registration rejected.");
                 return false;
             }
             registration.dependencies = Normalize(registration.dependencies);
             registration.orderingBefore = Normalize(registration.orderingBefore);
             registration.orderingAfter = Normalize(registration.orderingAfter);
             registration.compactableOperationKinds = Normalize(registration.compactableOperationKinds);
-            ProvidersById[registration.providerId] = provider;
+            if (ProvidersById.TryGetValue(registration.providerId, out RegisteredProvider existing) &&
+                existing?.Provider != null && existing.Provider.GetType() != provider.GetType())
+            {
+                Log.Error("[DeferredReality] Provider ID " + registration.providerId +
+                    " was already registered by " + existing.Provider.GetType().FullName +
+                    "; refusing a conflicting provider installation " + provider.GetType().FullName + ".");
+                return false;
+            }
+            ProvidersById[registration.providerId] = new RegisteredProvider
+            {
+                Provider = provider,
+                Registration = registration
+            };
             revision++;
             DeferredRealityWorldComponent world = DeferredRealityWorldComponent.Current;
-            if (world != null) NotifyProvider(provider, world);
+            if (world != null) NotifyProvider(ProvidersById[registration.providerId], world);
             return true;
         }
 
         /// <summary>Finds a provider without exposing registry storage.</summary>
         public static bool TryGet(string providerId, out IRealityProvider provider)
         {
-            return ProvidersById.TryGetValue(providerId ?? string.Empty, out provider);
+            if (ProvidersById.TryGetValue(providerId ?? string.Empty, out RegisteredProvider registered))
+            {
+                provider = registered.Provider;
+                return true;
+            }
+            provider = null;
+            return false;
         }
 
         /// <summary>Returns detached provider metadata for safe retention decisions.</summary>
         public static bool TryGetRegistration(string providerId, out RealityProviderRegistration registration)
         {
-            if (ProvidersById.TryGetValue(providerId ?? string.Empty, out IRealityProvider provider) && provider?.Registration != null)
+            if (ProvidersById.TryGetValue(providerId ?? string.Empty, out RegisteredProvider registered))
             {
-                registration = provider.Registration.Clone();
+                registration = registered.Registration.Clone();
                 return true;
             }
             registration = null;
@@ -66,16 +95,15 @@ namespace DeferredReality.API
         /// <summary>Returns detached registration metadata in deterministic order.</summary>
         public static IReadOnlyList<RealityProviderRegistration> Registrations()
         {
-            return OrderedProviders()
-                .Select(item => item.Registration.Clone()).ToList();
+            return OrderedProviders().Select(item => item.Registration.Clone()).ToList();
         }
 
         /// <summary>Returns providers implementing a capability interface in deterministic order.</summary>
         public static IReadOnlyList<T> OfType<T>() where T : class
         {
-            return OrderedProviders().Where(item => item is T &&
-                (!(item is IRealityCapabilitySource source) || source.ProvidesCapability(typeof(T))))
-                .Cast<T>().ToList();
+            return OrderedProviders().Where(item => item.Provider is T &&
+                (!(item.Provider is IRealityCapabilitySource source) || source.ProvidesCapability(typeof(T))))
+                .Select(item => (T)item.Provider).ToList();
         }
 
         /// <summary>Resolves a configured capability without exposing optional facade methods as false providers.</summary>
@@ -90,28 +118,29 @@ namespace DeferredReality.API
 
         internal static void NotifyWorldReady(DeferredRealityWorldComponent world)
         {
-            foreach (IRealityProvider provider in OrderedProviders()) NotifyProvider(provider, world);
+            foreach (RegisteredProvider provider in OrderedProviders()) NotifyProvider(provider, world);
         }
 
-        private static void NotifyProvider(IRealityProvider provider, DeferredRealityWorldComponent world)
+        private static void NotifyProvider(RegisteredProvider registered, DeferredRealityWorldComponent world)
         {
             try
             {
-                provider.OnRegistered(new RealityProviderContext(world, provider.Registration.providerId, world.Now));
-                world.ReactivateProviderProcesses(provider.Registration.providerId);
-                if (provider is IRegionDescriptorProvider descriptorProvider &&
-                    (!(provider is IRealityCapabilitySource source) ||
+                string providerId = registered.Registration.providerId;
+                registered.Provider.OnRegistered(new RealityProviderContext(world, providerId, world.Now));
+                world.ReactivateProviderProcesses(providerId);
+                if (registered.Provider is IRegionDescriptorProvider descriptorProvider &&
+                    (!(registered.Provider is IRealityCapabilitySource source) ||
                      source.ProvidesCapability(typeof(IRegionDescriptorProvider))))
                 {
                     foreach (RealityRegionDescriptor descriptor in descriptorProvider.DescribeRegions(
-                        new RealityProviderContext(world, provider.Registration.providerId, world.Now)) ?? Enumerable.Empty<RealityRegionDescriptor>())
+                        new RealityProviderContext(world, providerId, world.Now)) ?? Enumerable.Empty<RealityRegionDescriptor>())
                         if (descriptor != null) world.UpsertRegionDescriptor(descriptor);
                 }
             }
             catch (Exception exception)
             {
-                Log.ErrorOnce("Deferred Reality provider registration failed for " + provider.Registration.providerId + ": " + exception,
-                    RealityDeterminism.StableHash("provider-register:" + provider.Registration.providerId));
+                Log.ErrorOnce("Deferred Reality provider registration failed for " + registered.Registration.providerId + ": " + exception,
+                    RealityDeterminism.StableHash("provider-register:" + registered.Registration.providerId));
             }
         }
 
@@ -121,12 +150,12 @@ namespace DeferredReality.API
                 .Select(item => item.Trim()).Distinct(StringComparer.Ordinal).OrderBy(item => item, StringComparer.Ordinal).ToList();
         }
 
-        private static IReadOnlyList<IRealityProvider> OrderedProviders()
+        private static IReadOnlyList<RegisteredProvider> OrderedProviders()
         {
-            List<IRealityProvider> all = ProvidersById.Values.OrderBy(item => item.Registration.order)
+            List<RegisteredProvider> all = ProvidersById.Values.OrderBy(item => item.Registration.order)
                 .ThenBy(item => item.Registration.providerId, StringComparer.Ordinal).ToList();
             var edges = all.ToDictionary(item => item.Registration.providerId, item => new HashSet<string>(StringComparer.Ordinal), StringComparer.Ordinal);
-            foreach (IRealityProvider provider in all)
+            foreach (RegisteredProvider provider in all)
             {
                 RealityProviderRegistration registration = provider.Registration;
                 foreach (string dependency in registration.dependencies ?? new List<string>())
@@ -141,10 +170,10 @@ namespace DeferredReality.API
                 foreach (string target in targets) incoming[target]++;
             var ready = all.Where(item => incoming[item.Registration.providerId] == 0)
                 .OrderBy(item => item.Registration.order).ThenBy(item => item.Registration.providerId, StringComparer.Ordinal).ToList();
-            var result = new List<IRealityProvider>(all.Count);
+            var result = new List<RegisteredProvider>(all.Count);
             while (ready.Count > 0)
             {
-                IRealityProvider next = ready[0];
+                RegisteredProvider next = ready[0];
                 ready.RemoveAt(0);
                 result.Add(next);
                 foreach (string target in edges[next.Registration.providerId].OrderBy(item => item, StringComparer.Ordinal))

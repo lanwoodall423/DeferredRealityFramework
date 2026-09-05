@@ -16,6 +16,9 @@ Focused checks cover:
 - interrupted transfer journals, terminal-history retention, observation eviction,
   cancelled-process retention, and bounded diagnostics;
 - first-slot duplicate repair with schema/update-tick preference and save defaults;
+- framework release/API identity, accepted and rejected provider API versions,
+  no partial incompatible registration, frozen registration metadata, and
+  dependency ordering after provider-owned metadata mutation;
 - transactional fake-provider failures at every materialization stage, including a
   provider whose partial `Prepare` throws, reverse idempotent rollback, and
   original/rollback error preservation;
@@ -57,11 +60,17 @@ Focused checks cover:
 
 ## In-game checks
 
-RimTest owns in-game test selection and execution through the `smoke` suite in
-`TestCatalog/rimtest.catalog.json`. Its `quicktest-smoke` recipe delegates
-readiness and lifecycle to DevBridge2; the framework has no embedded
-GameComponent runner, environment-variable trigger, or runtime JSON result
-transport.
+The intended canonical in-game workflow is RimTest-owned: test selection and
+execution use the `smoke` suite in `TestCatalog/rimtest.catalog.json`. Its
+`deferred-reality-in-game-smoke` entry uses the
+`deferred-reality-development-smoke` recipe, which delegates readiness and
+lifecycle to DevBridge2. When runtime infrastructure is available, the release
+gate invokes `rimtest affected --run --json`.
+
+This section describes the intended workflow, not current evidence. A blocked
+readiness check or unavailable runtime records infrastructure blockage, not a
+test pass. The framework has no embedded GameComponent runner,
+environment-variable trigger, or runtime JSON result transport.
 
 Provider-owned map creation, Pawn transfer, construction attempts on a marked
 site, and save/load during outbound and return remain outside this framework-only

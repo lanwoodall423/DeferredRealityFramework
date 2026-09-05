@@ -9,6 +9,21 @@ package. Build and package an adapter from the consuming mod repository against
 the released DRF assembly. The framework's pure/static integrity checks validate
 the generic boundary but do not replace provider gameplay or live RimWorld tests.
 
+## Versioning and registration
+
+The release-candidate framework identity is exposed by
+`DeferredRealityFrameworkInfo.Version` (`0.1.0-rc.1`), and the exact loaded
+assembly identity is available through `BuildIdentity`. Provider registrations
+must set `semanticApiVersion` to
+`DeferredRealityFrameworkInfo.SupportedProviderApiVersion` (`1`). Other values
+are rejected before the provider enters the registry, with a diagnostic naming
+the provider and both API versions.
+
+The registry snapshots registration metadata during successful registration.
+Later changes to a provider-owned `RealityProviderRegistration` object do not
+change ordering, dependencies, capabilities, or retention policy. Re-register
+the provider to intentionally replace its snapshot.
+
 ## The simple path (recommended)
 
 Most providers need only four things: describe their latent state, run bounded
@@ -150,7 +165,7 @@ public sealed class ExampleProvider : IRealityProvider
     public RealityProviderRegistration Registration { get; } = new RealityProviderRegistration
     {
         providerId = "example.mod",
-        semanticApiVersion = 1,
+        semanticApiVersion = DeferredRealityFrameworkInfo.SupportedProviderApiVersion,
         capabilities = RealityProviderCapability.Populations,
         order = 400,
         // -1 means exactly-once markers remain durable forever.

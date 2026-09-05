@@ -42,39 +42,43 @@ The adapter boundary is conservative:
 
 `RealityRegionId.ProviderNamespace` remains the namespace of represented latent
 state. It is not required to equal `RealityAdjacentMapRecord.providerId`:
-provider ownership is a separate persisted field so a provider can own a temporary
-site representing a `core` `Surface(tile)` region. Root save schema 5 adds
-optional map-creation intents, adjacent diagnostics, and operation watermarks;
-schema 3/4 saves load missing collections as empty, and old adjacent markers
-without transaction IDs remain valid. Excursion task IDs, terminal ticks, and
- provider task IDs default to empty strings or `-1`. The optional
- `IRealityExcursionTaskCleanupProvider` is additive; providers that implement it
- can release runtime task/evidence state after a ticket is terminal. Cancelled
-tickets without a verified exact return remain recoverable and are not treated
-as historical records.
+provider ownership is a separate persisted field so a provider can own a
+temporary site representing a `core` `Surface(tile)` region.
 
-Applied-operation sequence fields and cursor proofs are additive in schema 5.
-Older operation-ID-only markers load with sequence `-1` and remain durable; old
-tick-only watermarks never become replay boundaries. Providers that adopt sequence
-domains must reject gaps or explicitly declare gap tolerance before mutating state,
-then advance the cursor only after the matching marker and state commit.
+## Save compatibility baseline
 
-The adjacent path is not described as production-ready before that live acceptance
-suite passes. A warm-cache reference is never treated as map eviction; only the
-registered provider factory may remove the actual map after all safety vetoes pass.
-- Excursion tickets retain the exact Pawn load ID, origin map/region, destination,
-  inverse edge, and transfer journal IDs. Return is attempted only through the
-  same provider host; provider removal, missing origins, unsafe jobs, and ambiguous
-  ownership retain the map and surface a diagnostic instead of teleporting or
-  choosing another map.
+`v0.1.0-rc.1` is the first public compatibility baseline. Existing/pre-release
+saves are supported only when they already use the current DRF field names and
+record types. DRF repairs absent optional collections and preserves unknown
+provider payloads and missing-provider records, but it has no root schema
+negotiation, historical schema 3/4/5 guarantee, pre-release migration layer, or
+map-ID alias table.
+
+The RC guarantee covers the current provider-neutral record shape, stable
+identifiers, registration contract, and opaque provider payloads across the
+0.1.x line, subject to the repair rules in `SAVE_FORMAT.md`.
+
+Providers are responsible for provider payload interpretation, stable provider
+identifiers, provider-owned map-component imports, gameplay state, and any
+provider-specific migration. DRF preserves provider-owned payloads as opaque
+records, keeps missing-provider data inspectable, and does not reconstruct
+provider gameplay or objects.
+
+The adjacent path remains experimental, opt-in, and disabled by default until
+the live acceptance suite passes. A warm-cache reference is never treated as
+map eviction; only the registered provider factory may remove the actual map
+after all safety vetoes pass. Excursion tickets retain the exact Pawn load ID,
+origin map/region, destination, inverse edge, and transfer journal IDs. Return
+is attempted only through the same provider host; provider removal, missing
+origins, unsafe jobs, and ambiguous ownership retain the map and surface a
+diagnostic instead of teleporting or choosing another map.
 
 The legacy `IAnchorProvider` ABI remains intact. Providers that need reversible
-anchor work can additionally implement `ITransactionalAnchorProvider`; legacy
-`OnAnchorMaterialized` is now a final commit-stage notification. Existing map
-aliases remain authoritative during migration. Nonstandard same-tile maps need an
-explicit `IRealityMapIdentityProvider` claim; unclaimed duplicates are quarantined
-instead of replacing an existing region link. Map readiness is handled once by
-the `Map.FinalizeInit` lifecycle hook.
+anchor work can additionally implement `ITransactionalAnchorProvider`;
+`OnAnchorMaterialized` is a final commit-stage notification. Nonstandard
+same-tile maps need an explicit `IRealityMapIdentityProvider` claim; unclaimed
+duplicates are quarantined instead of replacing an existing region link. Map
+readiness is handled once by the `Map.FinalizeInit` lifecycle hook.
 
 During generation, a transaction-scoped intent is the only compatibility path that
 can reclassify a newly created map. The `Map.FinalizeInit` postfix and provider map

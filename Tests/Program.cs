@@ -31,6 +31,7 @@ namespace DeferredReality.PureTests
                 CompressionPreservationContracts();
                 MaterializationObservationConsistencyContracts();
                 FidelityContractsAndEscalationTypes();
+                ProviderRegistrationCompatibilityContracts();
                 SimpleProviderCompositionContracts();
                 RetentionSelection();
                 TransitionCompensationSeams();
@@ -582,6 +583,84 @@ namespace DeferredReality.PureTests
                 "provider registration did not expose fidelity support");
         }
 
+        private static void ProviderRegistrationCompatibilityContracts()
+        {
+            Require(DeferredRealityFrameworkInfo.Version == "0.1.0-rc.1" &&
+                DeferredRealityFrameworkInfo.SupportedProviderApiVersion == 1 &&
+                !string.IsNullOrEmpty(DeferredRealityFrameworkInfo.BuildIdentity),
+                "framework identity did not expose the release and provider API versions");
+
+            var acceptedRegistration = new RealityProviderRegistration
+            {
+                providerId = "pure.registration.accepted",
+                semanticApiVersion = DeferredRealityFrameworkInfo.SupportedProviderApiVersion,
+                order = 9000
+            };
+            Require(RealityProviderRegistry.Register(new TestRegistrationProvider(acceptedRegistration)),
+                "current provider API version was rejected");
+
+            var unsupportedRegistration = new RealityProviderRegistration
+            {
+                providerId = "pure.registration.unsupported",
+                semanticApiVersion = DeferredRealityFrameworkInfo.SupportedProviderApiVersion + 1
+            };
+            Require(!RealityProviderRegistry.Register(new TestRegistrationProvider(unsupportedRegistration)),
+                "unsupported provider API version was accepted");
+            Require(!RealityProviderRegistry.TryGet("pure.registration.unsupported", out _),
+                "unsupported provider was partially registered");
+
+            var upstreamRegistration = new RealityProviderRegistration
+            {
+                providerId = "pure.registration.upstream",
+                semanticApiVersion = DeferredRealityFrameworkInfo.SupportedProviderApiVersion,
+                capabilities = RealityProviderCapability.Populations,
+                order = 9010,
+                displayName = "Upstream",
+                compactableOperationKinds = new List<string> { "transfer" }
+            };
+            var downstreamRegistration = new RealityProviderRegistration
+            {
+                providerId = "pure.registration.downstream",
+                semanticApiVersion = DeferredRealityFrameworkInfo.SupportedProviderApiVersion,
+                capabilities = RealityProviderCapability.Diagnostics,
+                order = 9001,
+                dependencies = new List<string> { upstreamRegistration.providerId }
+            };
+            Require(RealityProviderRegistry.Register(new TestRegistrationProvider(upstreamRegistration)) &&
+                RealityProviderRegistry.Register(new TestRegistrationProvider(downstreamRegistration)),
+                "provider metadata snapshot setup failed");
+
+            string[] beforeMutation = RealityProviderRegistry.Registrations()
+                .Where(item => item.providerId.StartsWith("pure.registration.", StringComparison.Ordinal) &&
+                    item.providerId != "pure.registration.accepted")
+                .Select(item => item.providerId).ToArray();
+            Require(beforeMutation.SequenceEqual(new[]
+            {
+                "pure.registration.upstream", "pure.registration.downstream"
+            }), "provider dependency ordering changed before metadata mutation");
+
+            upstreamRegistration.providerId = "pure.registration.changed";
+            upstreamRegistration.order = -1000;
+            upstreamRegistration.capabilities = RealityProviderCapability.None;
+            upstreamRegistration.dependencies.Clear();
+            upstreamRegistration.compactableOperationKinds.Clear();
+            downstreamRegistration.order = -2000;
+            downstreamRegistration.dependencies.Clear();
+
+            Require(RealityProviderRegistry.TryGetRegistration("pure.registration.upstream",
+                out RealityProviderRegistration frozen) &&
+                frozen.providerId == "pure.registration.upstream" && frozen.order == 9010 &&
+                frozen.capabilities == RealityProviderCapability.Populations &&
+                frozen.compactableOperationKinds.SequenceEqual(new[] { "transfer" }),
+                "registered provider metadata was not frozen");
+            string[] afterMutation = RealityProviderRegistry.Registrations()
+                .Where(item => item.providerId.StartsWith("pure.registration.", StringComparison.Ordinal) &&
+                    item.providerId != "pure.registration.accepted")
+                .Select(item => item.providerId).ToArray();
+            Require(beforeMutation.SequenceEqual(afterMutation),
+                "provider metadata mutation changed deterministic registry ordering");
+        }
+
         private static void SimpleProviderCompositionContracts()
         {
             int executions = 0;
@@ -1021,6 +1100,7 @@ namespace DeferredReality.PureTests
             };
             Require(RealityMapCreationPolicy.CanClassifyMap(false, false, intent.transactionId, -1, 77),
                 "a newly generated map was not eligible for intent classification");
+
             Require(!RealityMapCreationPolicy.CanClassifyMap(true, false, intent.transactionId, -1, 77),
                 "an existing ordinary map could be reclassified by an intent");
             Require(!RealityMapCreationPolicy.CanClassifyMap(false, false, intent.transactionId, 77, 78),
@@ -1098,6 +1178,17 @@ namespace DeferredReality.PureTests
                 "newer update tick did not replace an older duplicate");
             Require(!RealityRepairPolicy.ShouldReplaceDuplicate(11, 10),
                 "older update tick replaced a newer duplicate");
+        }
+        private sealed class TestRegistrationProvider : IRealityProvider
+        {
+            public TestRegistrationProvider(RealityProviderRegistration registration)
+            {
+                Registration = registration;
+            }
+
+            public RealityProviderRegistration Registration { get; }
+
+            public void OnRegistered(RealityProviderContext context) { }
         }
 
         private sealed class FakeStageProvider

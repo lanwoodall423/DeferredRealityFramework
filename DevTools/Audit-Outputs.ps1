@@ -1,11 +1,15 @@
-param(
-    [string]$BuildAssemblyPath = ''
-)
+param()
 
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 $packageDirectory = Join-Path $root '1.6\Assemblies'
 $packagePath = Join-Path $packageDirectory 'DeferredRealityFramework.dll'
+$releaseBuildPath = Join-Path $root 'Source\obj\Release\DeferredRealityFramework.dll'
+$identitySource = Get-Content -LiteralPath (Join-Path $root 'Source\API\FrameworkIdentity.cs') -Raw
+$expectedVersion = ([regex]::Match($identitySource, 'public const string Version = "([^"]+)"')).Groups[1].Value
+$expectedAssemblyVersion = ([regex]::Match($identitySource, 'public const string AssemblyVersion = "([^"]+)"')).Groups[1].Value
+$expectedInformationalVersion = $expectedVersion + '+release-candidate'
 $forbiddenReferences = @('Wildlife', 'Herds', 'Aquaculture', 'Horticulture', 'PacksAndPredators')
 $checks = New-Object System.Collections.Generic.List[object]
 $failures = New-Object System.Collections.Generic.List[string]
@@ -21,46 +25,46 @@ function Test-AssemblyReferenceToken([string]$Path, [string]$Token) {
     $unicode = [Text.Encoding]::Unicode.GetString($bytes)
     return $ascii.Contains($Token) -or $unicode.Contains($Token)
 }
-
 try {
+    $packageRoot = Join-Path $root '1.6'
+    $packageDlls = @()
+    if (Test-Path -LiteralPath $packageRoot -PathType Container) {
+        $packageDlls = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -File -Filter '*.dll')
+    }
+    $packageMatches = @($packageDlls | Where-Object {
+        [string]::Equals($_.FullName, $packagePath, [StringComparison]::OrdinalIgnoreCase)
+    })
     $exists = Test-Path -LiteralPath $packagePath -PathType Leaf
-    Add-Check 'framework-dll' $exists $(if ($exists) { $packagePath } else { 'missing framework Release output' })
-    if ($exists) {
+    Add-Check 'framework-dll' ($exists -and $packageMatches.Count -eq 1) $(
+        if ($exists -and $packageMatches.Count -eq 1) { $packagePath } else { 'missing or ambiguous framework Release output' }
+    )
+    Add-Check 'framework-dll-count' ($packageDlls.Count -eq 1 -and $packageMatches.Count -eq 1) (
+        "expected one framework DLL under 1.6/Assemblies; found $($packageDlls.Count)"
+    )
+    if ($exists -and $packageMatches.Count -eq 1) {
         $badReferences = @($forbiddenReferences | Where-Object {
                 Test-AssemblyReferenceToken $packagePath $_
             })
         Add-Check 'framework-provider-references' ($badReferences.Count -eq 0) $(if ($badReferences.Count -eq 0) { 'none' } else { $badReferences -join '; ' })
-        $packageAssemblyName = [Reflection.AssemblyName]::GetAssemblyName($packagePath).Name
-        Add-Check 'framework-identity' ($packageAssemblyName -eq 'DeferredRealityFramework') $packageAssemblyName
+        $assemblyName = [Reflection.AssemblyName]::GetAssemblyName($packagePath)
+        Add-Check 'framework-identity' ($assemblyName.Name -eq 'DeferredRealityFramework') $assemblyName.Name
+        Add-Check 'framework-assembly-version' ($assemblyName.Version.ToString() -eq $expectedAssemblyVersion) $assemblyName.Version.ToString()
+        $fileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($packagePath)
+        Add-Check 'framework-file-version' ($fileVersion.FileVersion -eq $expectedAssemblyVersion) $fileVersion.FileVersion
+        Add-Check 'framework-informational-version' ($fileVersion.ProductVersion -eq $expectedInformationalVersion) $fileVersion.ProductVersion
     }
-
-    $providerDlls = @()
-    $packageRoot = Join-Path $root '1.6'
-    if (Test-Path -LiteralPath $packageRoot) {
-        $providerDlls = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -File -Filter '*.dll' |
-            Where-Object { $_.FullName -ne $packagePath })
-    }
+    $providerDlls = @($packageDlls | Where-Object {
+        -not [string]::Equals($_.FullName, $packagePath, [StringComparison]::OrdinalIgnoreCase)
+    })
     Add-Check 'package-provider-dlls' ($providerDlls.Count -eq 0) $(if ($providerDlls.Count -eq 0) { 'none' } else { ($providerDlls.Name -join '; ') })
 
-    if ([string]::IsNullOrWhiteSpace($BuildAssemblyPath)) {
-        $candidates = @(
-            (Join-Path $root 'Source\bin\Release\net472\DeferredRealityFramework.dll'),
-            (Join-Path $root 'Source\obj\Release\net472\DeferredRealityFramework.dll')
-        ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
-        if ($candidates.Count -eq 1) { $BuildAssemblyPath = $candidates[0] }
+    $buildExists = Test-Path -LiteralPath $releaseBuildPath -PathType Leaf
+    $matches = $false
+    if ($buildExists -and $exists -and $packageMatches.Count -eq 1) {
+        $matches = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash -eq
+            (Get-FileHash -LiteralPath $releaseBuildPath -Algorithm SHA256).Hash
     }
-    if (-not [string]::IsNullOrWhiteSpace($BuildAssemblyPath) -and $exists) {
-        $buildExists = Test-Path -LiteralPath $BuildAssemblyPath -PathType Leaf
-        $matches = $false
-        if ($buildExists) {
-            $matches = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash -eq
-                (Get-FileHash -LiteralPath $BuildAssemblyPath -Algorithm SHA256).Hash
-        }
-        Add-Check 'release-build-match' ($buildExists -and $matches) $(if ($matches) { $BuildAssemblyPath } else { 'release build counterpart unavailable or differs' })
-    }
-    else {
-        Add-Check 'release-build-match' $true 'not compared; the configured Release output is the packaged framework DLL'
-    }
+    Add-Check 'release-build-match' ($buildExists -and $matches) $(if ($matches) { $releaseBuildPath } else { 'direct Source/obj/Release build counterpart unavailable or differs' })
 
     $status = if ($failures.Count -eq 0) { 'PASS' } else { 'FAIL' }
     [pscustomobject]@{ status = $status; checks = $checks.ToArray(); failures = $failures.ToArray() } | ConvertTo-Json -Depth 5

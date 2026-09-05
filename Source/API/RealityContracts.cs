@@ -9,7 +9,8 @@ namespace DeferredReality.API
     public sealed class RealityProviderRegistration
     {
         public string providerId;
-        public int semanticApiVersion = 1;
+        /// <summary>Provider registration API version; the registry accepts only the framework-supported version.</summary>
+        public int semanticApiVersion = DeferredRealityFrameworkInfo.SupportedProviderApiVersion;
         public int order;
         public RealityProviderCapability capabilities;
         /// <summary>Fidelities this provider can represent for its regions.</summary>

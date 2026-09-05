@@ -16,11 +16,12 @@ function Test-AssemblyReferenceToken([string]$Path, [string]$Token) {
 }
 
 try {
-    $required = @('.gitignore', 'CONTRIBUTING.md', 'ARCHITECTURE.md', 'COMPATIBILITY.md',
+    $required = @('.gitignore', 'README.md', 'CONTRIBUTING.md', 'ARCHITECTURE.md', 'COMPATIBILITY.md',
         'PROVIDER_GUIDE.md', 'TEST_PLAN.md', 'SAVE_FORMAT.md', 'RELEASE_NOTES.md',
         'MANUAL_ACCEPTANCE_REPORT.md', '.github\workflows\integrity.yml',
-        'Source\DeferredRealityFramework.csproj', 'Tests\DeferredReality.PureTests.csproj',
-        'DevTools\Build-All.ps1', 'DevTools\Audit-Outputs.ps1',
+        'Source\DeferredRealityFramework.csproj', 'Source\Properties\AssemblyInfo.cs',
+        'Tests\DeferredReality.PureTests.csproj',
+        'DevTools\New-ReleasePackage.ps1', 'DevTools\Invoke-ReleaseGate.ps1',
         'DevTools\RimWorldReferences.props', 'DevTools\Resolve-RimWorldDependencies.ps1',
         'DevTools\Check-RepositoryIntegrity.ps1')
     foreach ($path in $required) {
@@ -44,10 +45,12 @@ try {
     $coreProject = Get-Content -LiteralPath (Join-Path $root 'Source\DeferredRealityFramework.csproj') -Raw
     Add-Check 'core-project-boundary' ($coreProject -match 'Adapters\\\*\*' -and $coreProject -notmatch 'Aquaculture|Horticulture|Wildlife|Herds') 'provider source is excluded from the core project'
     $adapterRoot = Join-Path $root 'Source\Adapters'
-    $providerSources = if (Test-Path -LiteralPath $adapterRoot) {
-        @(Get-ChildItem -LiteralPath $adapterRoot -Recurse -File |
-            Where-Object { $_.Extension -in @('.cs', '.csproj') })
-    } else { @() }
+    $providerSources = @(
+        if (Test-Path -LiteralPath $adapterRoot) {
+            Get-ChildItem -LiteralPath $adapterRoot -Recurse -File |
+                Where-Object { $_.Extension -in @('.cs', '.csproj') }
+        }
+    )
     Add-Check 'provider-source-boundary' ($providerSources.Count -eq 0) $(if ($providerSources.Count -eq 0) { 'no provider source in framework checkout' } else { $providerSources.FullName -join '; ' })
     $buildScript = Get-Content -LiteralPath (Join-Path $root 'DevTools\Build-All.ps1') -Raw
     Add-Check 'default-build-boundary' ($buildScript -notmatch 'Aquaculture|Horticulture|Wildlife|Herds|Source\\Adapters') 'default build has no provider project dependency'
