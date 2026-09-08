@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0-rc.1'
+    [string]$Version = '0.1.0-rc.2'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -215,7 +215,7 @@ try {
     Invoke-Stage 'release build and pure tests' (Join-Path $PSScriptRoot 'Build-All.ps1')
     Invoke-Stage 'output audit' (Join-Path $PSScriptRoot 'Audit-Outputs.ps1') -JsonOutput
     Invoke-Stage 'canonical RimTest affected/runtime validation' $rimTest @('affected', '--run', '--json') -JsonOutput
-    Invoke-Stage 'release package validation' (Join-Path $PSScriptRoot 'New-ReleasePackage.ps1') -Arguments @('-Version', $Version) -JsonOutput
+    Invoke-Stage 'release package validation' (Join-Path $PSScriptRoot 'New-ReleasePackage.ps1') -Arguments @($Version) -JsonOutput
 
     [pscustomobject]@{
         status = 'PASS'

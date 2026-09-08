@@ -280,7 +280,8 @@ namespace DeferredReality.API
         IMaterializationProvider, IStageAwareMaterializationProvider, ITransactionalAnchorProvider,
         ITransactionalAnchorCommitProvider, IRealityMapIdentityProvider, ICompressionProvider, IObservationProvider,
         IRealityDiagnosticsProvider, IRealityMaterializationConsistencyProvider, IAdjacentRegionTransferHost,
-        IRealityExcursionTaskProvider, IRealityExcursionTaskCleanupProvider, IRealityExactlyOnceProvider
+        IRealityExcursionTaskProvider, IRealityExcursionTaskCleanupProvider, IRealityExcursionReturnGate,
+        IRealityExactlyOnceProvider
     {
         private readonly Action<RealityProviderContext> onRegistered;
         private readonly Func<RealityProviderContext, IEnumerable<RealityRegionDescriptor>> regions;
@@ -522,6 +523,14 @@ namespace DeferredReality.API
             return false;
         }
         public void ForgetExcursionTask(RealityExcursionTicket ticket) => Find<IRealityExcursionTaskCleanupProvider>()?.ForgetExcursionTask(ticket);
+        public RealityExcursionReturnDisposition EvaluateReturn(RealityExcursionTicket ticket, long now, out string diagnostic)
+        {
+            IRealityExcursionReturnGate provider = Find<IRealityExcursionReturnGate>();
+            if (provider != null) return provider.EvaluateReturn(ticket, now, out diagnostic);
+            diagnostic = null;
+            return RealityExcursionReturnDisposition.Ready;
+        }
+
 
         public bool TryDescribeExactlyOnceDomain(string kind, string domainId, out RealityExactlyOnceDomain domain)
         {

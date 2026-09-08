@@ -663,6 +663,15 @@ namespace DeferredReality.API
     {
         void ForgetExcursionTask(RealityExcursionTicket ticket);
     }
+    /// <summary>
+    /// Optional provider gate for the inverse leg of an excursion. The framework treats
+    /// an absent gate as Ready and never transfers while the gate reports Pending.
+    /// </summary>
+    public interface IRealityExcursionReturnGate
+    {
+        RealityExcursionReturnDisposition EvaluateReturn(RealityExcursionTicket ticket, long now, out string diagnostic);
+    }
+
 
     /// <summary>Bounded evidence supplied by an integration for an excursion task or lease.</summary>
     public sealed class RealityExcursionTaskObservation

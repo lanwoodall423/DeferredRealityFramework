@@ -43,6 +43,7 @@ namespace DeferredReality.PureTests
                 DuplicateRepairSemantics();
                 DefaultStateContracts();
                 AdjacentPolicyBoundaries();
+                ExcursionReturnLifecycleContracts();
                 HarmonyTargetResolvers();
                 HarmonyPatchRegistrationSmoke();
                 ThreadGuardDoesNotSelfInitialize();
@@ -585,7 +586,7 @@ namespace DeferredReality.PureTests
 
         private static void ProviderRegistrationCompatibilityContracts()
         {
-            Require(DeferredRealityFrameworkInfo.Version == "0.1.0-rc.1" &&
+            Require(DeferredRealityFrameworkInfo.Version == "0.1.0-rc.2" &&
                 DeferredRealityFrameworkInfo.SupportedProviderApiVersion == 1 &&
                 !string.IsNullOrEmpty(DeferredRealityFrameworkInfo.BuildIdentity),
                 "framework identity did not expose the release and provider API versions");
@@ -842,6 +843,103 @@ namespace DeferredReality.PureTests
             Require(!RealityRetentionPolicy.IsTerminalExcursion(ticket) &&
                 RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, 2),
                 "return-requested excursion was treated as historical");
+        }
+
+        private static void ExcursionReturnLifecycleContracts()
+        {
+            RealityExcursionTicket ticket = NewReturnTicket(RealityExcursionStatus.ReturnRequested);
+            Require(RealityAdjacentPolicy.IsReturnDue(ticket, 101, true, true, false, false),
+                "ReturnRequested did not authorize the first return boundary");
+
+            ticket.status = RealityExcursionStatus.Returning;
+            ticket.retryTick = 300;
+            Require(!RealityRetentionPolicy.IsTerminalExcursion(ticket) &&
+                RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, ticket.destinationMapUniqueId),
+                "Returning did not retain recoverable ownership");
+
+            IReadOnlyList<RealityExcursionTicket> reloaded = RealityRetentionPolicy.SelectExcursions(
+                new[] { ticket }, 1000);
+            Require(reloaded.Count == 1 && reloaded[0].status == RealityExcursionStatus.Returning &&
+                reloaded[0].retryTick == 300,
+                "save/load selection changed a durable Returning ticket");
+
+            var pendingGate = new TestReturnGate(RealityExcursionReturnDisposition.Pending, "provider work is still active");
+            Require(RealityAdjacentPolicy.EvaluateReturn(pendingGate, ticket, 300, out string pendingDiagnostic) ==
+                RealityExcursionReturnDisposition.Pending && pendingDiagnostic == "provider work is still active",
+                "a provider Pending return gate was not retained");
+
+            var readyGate = new TestReturnGate(RealityExcursionReturnDisposition.Ready, "provider work complete");
+            Require(RealityAdjacentPolicy.EvaluateReturn(readyGate, ticket, 300, out string readyDiagnostic) ==
+                RealityExcursionReturnDisposition.Ready && readyDiagnostic == "provider work complete" &&
+                RealityAdjacentPolicy.IsReturnDue(ticket, 300, false, true, false, false),
+                "a provider Ready return gate did not authorize the inverse-transfer attempt");
+
+            Require(RealityAdjacentPolicy.EvaluateReturn(null, ticket, 300, out string absentDiagnostic) ==
+                RealityExcursionReturnDisposition.Ready && absentDiagnostic == null,
+                "an absent return gate was not backward-compatible");
+
+            ticket.retryTick = 600;
+            IReadOnlyList<RealityExcursionTicket> pendingReload = RealityRetentionPolicy.SelectExcursions(
+                new[] { ticket }, 1000);
+            Require(pendingReload.Count == 1 && pendingReload[0].status == RealityExcursionStatus.Returning &&
+                pendingReload[0].retryTick == 600 && !RealityAdjacentPolicy.IsReturnDue(ticket, 500, false, true, false, false),
+                "a Pending gate backoff was not durable across reload");
+
+            ticket.retryTick = 0;
+            IReadOnlyList<RealityExcursionTicket> readyReload = RealityRetentionPolicy.SelectExcursions(
+                new[] { ticket }, 1000);
+            Require(readyReload.Count == 1 && readyReload[0].status == RealityExcursionStatus.Returning &&
+                RealityAdjacentPolicy.IsReturnDue(ticket, 1000, false, true, false, false),
+                "a Ready gate reload did not leave Returning eligible");
+
+            IReadOnlyList<RealityExcursionTicket> duplicate = RealityRetentionPolicy.SelectExcursions(
+                new[] { ticket, NewReturnTicket(RealityExcursionStatus.Completed, ticket.excursionId) }, 1000);
+            Require(duplicate.Count == 1 && duplicate[0].status == RealityExcursionStatus.Returning,
+                "duplicate monitoring records did not prefer the recoverable Returning ticket");
+
+            ticket.status = RealityExcursionStatus.ReturnRequested;
+            ticket.retryTick = 300;
+            Require(!RealityAdjacentPolicy.IsReturnDue(ticket, 299, true, true, false, false) &&
+                RealityAdjacentPolicy.IsReturnDue(ticket, 300, true, true, false, false),
+                "transfer failure retry did not preserve ReturnRequested backoff semantics");
+
+            ticket.status = RealityExcursionStatus.Completed;
+            Require(RealityRetentionPolicy.IsTerminalExcursion(ticket) &&
+                !RealityAdjacentPolicy.IsReturnDue(ticket, 1000, true, true, false, false),
+                "a completed excursion could be replayed by the return monitor");
+
+            ticket = NewReturnTicket(RealityExcursionStatus.Returning);
+            Require(RealityAdjacentPolicy.HasActiveLease(new[] { ticket }, ticket.originMapUniqueId),
+                "provider removal did not retain the Returning ownership lease");
+
+            var failingGate = new TestReturnGate(RealityExcursionReturnDisposition.Ready, null) { Throw = true };
+            Require(RealityAdjacentPolicy.EvaluateReturn(failingGate, ticket, 0, out string failureDiagnostic) ==
+                RealityExcursionReturnDisposition.Pending && failureDiagnostic.Contains("failed"),
+                "a return-gate failure did not fail closed");
+        }
+
+        private static RealityExcursionTicket NewReturnTicket(RealityExcursionStatus status, string id = "return-test")
+        {
+            return new RealityExcursionTicket
+            {
+                excursionId = id,
+                providerId = "provider",
+                pawnLoadId = "pawn:" + id,
+                taskId = "task:" + id,
+                originRegionId = RealityRegionId.Surface(1).ToString(),
+                originMapUniqueId = 1,
+                destinationRegionId = RealityRegionId.Surface(2).ToString(),
+                destinationMapUniqueId = 2,
+                inverseReturnEdge = "south",
+                outboundTransferId = "outbound:" + id,
+                returnTransferId = "return:" + id,
+                startTick = 0,
+                graceDeadline = 100,
+                lastTaskHeartbeat = 10,
+                retryTick = 0,
+                status = status,
+                terminalTick = status == RealityExcursionStatus.Completed ? 900 : -1
+            };
         }
 
         private static void ThreadGuardDoesNotSelfInitialize()
@@ -1179,6 +1277,27 @@ namespace DeferredReality.PureTests
             Require(!RealityRepairPolicy.ShouldReplaceDuplicate(11, 10),
                 "older update tick replaced a newer duplicate");
         }
+        private sealed class TestReturnGate : IRealityExcursionReturnGate
+        {
+            private readonly RealityExcursionReturnDisposition disposition;
+            private readonly string diagnostic;
+            public bool Throw;
+
+            public TestReturnGate(RealityExcursionReturnDisposition disposition, string diagnostic)
+            {
+                this.disposition = disposition;
+                this.diagnostic = diagnostic;
+            }
+
+            public RealityExcursionReturnDisposition EvaluateReturn(RealityExcursionTicket ticket, long now,
+                out string diagnostic)
+            {
+                if (Throw) throw new InvalidOperationException("gate failure");
+                diagnostic = this.diagnostic;
+                return disposition;
+            }
+        }
+
         private sealed class TestRegistrationProvider : IRealityProvider
         {
             public TestRegistrationProvider(RealityProviderRegistration registration)

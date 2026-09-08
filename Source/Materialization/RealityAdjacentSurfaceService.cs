@@ -77,6 +77,7 @@ namespace DeferredReality.Materialization
         {
             if (ticket == null || RealityRetentionPolicy.IsTerminalExcursion(ticket) ||
                 ticket.status == RealityExcursionStatus.Quarantined || ticket.retryTick > now) return;
+            bool returning = ticket.status == RealityExcursionStatus.Returning;
             Pawn pawn = FindPawnAnywhere(ticket.pawnLoadId, out Map pawnMap, out bool inCaravanOrWorldPawns,
                 out bool ambiguousOwnership);
             if (ambiguousOwnership)
@@ -133,12 +134,14 @@ namespace DeferredReality.Materialization
                     }
                     else if (observation.completed)
                     {
-                        world.CompleteExcursion(ticket.excursionId, observation.diagnostic ?? "The provider task completed.");
+                        if (!returning)
+                            world.CompleteExcursion(ticket.excursionId, observation.diagnostic ?? "The provider task completed.");
                         taskCompleted = true;
                     }
                     else if (observation.abandoned)
                     {
-                        world.CancelExcursion(ticket.excursionId, observation.diagnostic ?? "The provider task was abandoned.");
+                        if (!returning)
+                            world.CancelExcursion(ticket.excursionId, observation.diagnostic ?? "The provider task was abandoned.");
                         taskCompleted = true;
                     }
                     else if (observation.active && RealityAdjacentPolicy.IsFreshTaskEvidence(observation.evidenceTick, now))
@@ -180,8 +183,28 @@ namespace DeferredReality.Materialization
                     "Excursion region identities could not be parsed during return monitoring.", null);
                 return;
             }
+            if (returning)
+            {
+                RealityExcursionReturnDisposition disposition = RealityAdjacentPolicy.EvaluateReturn(
+                    RealityProviderRegistry.TryGetCapability(ticket.providerId, out IRealityExcursionReturnGate gate)
+                        ? gate : null, ticket, now, out string readinessDiagnostic);
+                if (disposition != RealityExcursionReturnDisposition.Ready)
+                {
+                    world.SetExcursionDiagnostic(ticket.excursionId,
+                        string.IsNullOrEmpty(readinessDiagnostic)
+                            ? "The provider return gate is pending; inverse transfer remains deferred."
+                            : "The provider return gate is pending: " + readinessDiagnostic,
+                        now + RealityAdjacentPolicy.RetryBackoffTicks);
+                    return;
+                }
+            }
             if (pawn.CurJob != null && IsSafeIdle(pawn)) pawn.jobs.EndCurrentJob(JobCondition.InterruptForced);
-            world.MarkExcursionReturning(ticket.excursionId, now + RealityAdjacentPolicy.RetryBackoffTicks, "Return transfer in progress.");
+            if (!returning)
+            {
+                if (!world.MarkExcursionReturning(ticket.excursionId,
+                    now + RealityAdjacentPolicy.RetryBackoffTicks, "Return transfer boundary entered; awaiting the next monitor pass.")) return;
+                return;
+            }
             RealityAdjacentTransferResult result = RealityRegionTransferService.TryTransfer(new RealityAdjacentTransferRequest
             {
                     providerId = ticket.providerId,

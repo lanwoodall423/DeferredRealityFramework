@@ -37,6 +37,25 @@ namespace DeferredReality.Materialization
                 ticket.lastTaskHeartbeat > 0 && now - ticket.lastTaskHeartbeat >= DefaultLeaseTicks;
             return leaseExpired && safelyIdle && !unsafeState && !providerTaskActive;
         }
+        /// <summary>Resolves the optional provider return gate without allowing provider failure to authorize transfer.</summary>
+        public static RealityExcursionReturnDisposition EvaluateReturn(
+            IRealityExcursionReturnGate gate, RealityExcursionTicket ticket, long now, out string diagnostic)
+        {
+            diagnostic = null;
+            if (gate == null) return RealityExcursionReturnDisposition.Ready;
+            try
+            {
+                RealityExcursionReturnDisposition disposition = gate.EvaluateReturn(ticket, now, out diagnostic);
+                if (Enum.IsDefined(typeof(RealityExcursionReturnDisposition), disposition)) return disposition;
+                diagnostic = "The provider return gate returned an unknown disposition.";
+            }
+            catch (Exception exception)
+            {
+                diagnostic = "The provider return gate failed: " + exception.Message;
+            }
+            return RealityExcursionReturnDisposition.Pending;
+        }
+
 
         public static string InverseEdge(string edge)
         {

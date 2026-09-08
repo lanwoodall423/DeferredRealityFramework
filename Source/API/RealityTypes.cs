@@ -346,6 +346,12 @@ namespace DeferredReality.API
         Cancelled,
         Quarantined
     }
+    /// <summary>Provider disposition for whether an excursion Pawn may begin its inverse transfer.</summary>
+    public enum RealityExcursionReturnDisposition
+    {
+        Ready,
+        Pending
+    }
 
     /// <summary>Capabilities advertised by a provider.</summary>
     [Flags]

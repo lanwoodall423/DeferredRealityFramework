@@ -1,67 +1,89 @@
 # Manual Acceptance Report
 
-Status: `NOT ACCEPTED — LIVE EXECUTION REQUIRED`
+Status: `NOT ACCEPTED — mandatory live matrix incomplete; stable promotion forbidden`
 
-This report records no manual acceptance pass. It records no live RimWorld
-result unless a game log or direct observation is attached. The current
-repository validation had no live RimWorld execution.
+Fresh evidence was obtained through the canonical DevBridge/RimLiaison workflow
+against the RC assembly hash
+`e19fd10d99b0948a53a00783ae985f1aa09c9bf8eaede3d91dd7d5d21650f82c`.
+The following rows remain unexecuted or only partial; they are not promoted.
 
-| Check | Repository | Mode | Evidence | Result | Remaining action |
-|---|---|---|---|---|---|
-| Save/reload while excursion is outbound | DRF + provider | Manual | No live log | UNEXECUTED | Run with a provider adapter |
-| Save/reload during return | DRF + provider | Manual | No live log | UNEXECUTED | Run during inverse transfer |
-| Provider heartbeat, completion, abandonment after reload | Provider | Manual | No live log | UNEXECUTED | Exercise provider callbacks |
-| Forced `Pawn.ExitMap` failure/no-op with zero aggregate drift | Provider | Manual | No live log | UNEXECUTED | Force exception and verify populations/anchors |
-| Successful departure and exactly-one aggregate transfer | Provider | Manual | No live log | UNEXECUTED | Compare before/after population totals |
-| Missing origin and provider removal/re-registration | DRF + provider | Manual | No live log | UNEXECUTED | Remove provider and restore it in-game |
-| Exact Pawn identity and inventory/equipment/apparel/health/relations/needs | DRF + provider | Manual | No live log | UNEXECUTED | Compare the same Pawn object before/after |
-| Duplicate monitor ticks and duplicate operation replay | DRF + provider | Manual | No live log | UNEXECUTED | Repeat monitor and operation requests |
-| Construction, blueprint, frame, floor, and reinstall blocking | DRF | Manual | No live log | UNEXECUTED | Test every listed construction path |
-| Ordinary-map behavior remains unaffected | DRF | Manual | No live log | UNEXECUTED | Repeat construction tests on a normal map |
-| Safe eviction and vetoed eviction | DRF + provider | Manual | No live log | UNEXECUTED | Verify real deinitialization and veto retention |
-| Same-tile identity conflicts and partial-Prepare rollback | DRF + provider | Debug/manual | Pure seams only | UNEXECUTED | Run live map and provider failure cases |
+| Check | Evidence | Result | Remaining action |
+|---|---|---|---|
+| Save/reload while excursion is outbound | `artifacts/release/live-save-outbound.json`, `live-load-outbound.json`, `live-snapshot-outbound-after-load.json` | PASS | None for this stage |
+| Save/reload during return | `live-journey-return-after-reload.json` only | UNEXECUTED | Provider bridge has no save point while stage is `returning` |
+| Provider heartbeat, completion, abandonment after reload | No provider callback fixture | UNEXECUTED | Add/use a provider-owned reload callback scenario |
+| Forced `Pawn.ExitMap` failure/no-op with zero aggregate drift | No failure-injection surface | UNEXECUTED | Exercise provider-owned ExitMap failure and aggregate assertions |
+| Successful departure and exactly-one aggregate transfer | Stateful report: `frontier-stateful-tests.json` | PARTIAL | Add aggregate-before/after and exactly-one transfer assertions |
+| Missing origin and provider removal/re-registration | No live scenario surface | UNEXECUTED | Run provider removal and origin-loss recovery in-game |
+| Exact Pawn identity and inventory/equipment/apparel/health/relations/needs | Snapshot exposes only `partyCount` | UNEXECUTED | Compare exact Pawn and all listed state before/after |
+| Duplicate monitor ticks and duplicate operation replay | Stateful report + runtime-gap suite | PARTIAL PASS | Monitor-tick duplicate path remains unobserved |
+| Construction, blueprint, frame, floor, and reinstall blocking | No live temporary-site construction scenario | UNEXECUTED | Exercise every listed construction path on a marked map |
+| Ordinary-map behavior remains unaffected | No paired live ordinary-map run | UNEXECUTED | Repeat construction checks on an ordinary map |
+| Safe eviction and vetoed eviction | No live eviction scenario | UNEXECUTED | Verify deinitialization and veto retention in-game |
+| Same-tile identity conflicts and partial-Prepare rollback | Frontier smoke map identity PASS; rollback capability PASS | PARTIAL | Run same-tile conflict and provider partial-Prepare cases live |
+
+The provider state was restored to its clean fixture after the run.
 
 ## Stable Runtime Qualification
 
-Status: `INFRASTRUCTURE BLOCKED` for the current release-candidate gate.
+Status: `NOT ACCEPTED — live matrix incomplete`
 
-The current gate did not create a runtime workflow. Its owner-managed readiness
-check returned:
+RC runtime evidence is current and positive for the exercised subset:
 
-- `rimliaison doctor --json`: `status=blocked`
-- `code=PRODUCTION_TOOLCHAIN_ARTIFACT_MISSING`
-- `nextAction=Repair or reinstall the unified promoted production package`
-- `evaluationStatus=NOT_EVALUATED`
+- outbound save/reload preserved a planned journey and party;
+- arrived save/reload preserved the materialized destination identity;
+- return completed after reload and returned save/reload loaded as `compatible`;
+- no `ERROR` records were returned for generation 1;
+- no stable version artifact was promoted.
 
-The checked-in build artifact is not release-candidate evidence:
+Stable qualification requires fresh evidence for every mandatory supported case.
+No stable source/version/tag/package changes were made.
 
-- Version: assembly `0.1.0.0`, file `0.1.0.0`, informational `0.1.0`
-- Required replacement: rebuild from the release-candidate source identity
+## Current Live Evidence
 
-No current startup, save/reload, or gameplay evidence is claimed. No product
-failure is inferred from the owner-tool infrastructure block.
+- Frontier smoke: workflow `rw-ea517ee70c344d1980cf1e92d774f1ff`, PASS.
+- Frontier runtime gaps: workflow `rw-fea3413adafc443184adc8f8a49a362d`, PASS 3/3.
+- Frontier stateful report: `DevBridge2/Runtime/frontier-stateful-tests.json`, PASS 15/15 operations.
+- Runtime generation: `1`, launch ID `98d3aec241074681908fed456d5262ef`.
+- DevBridge status after cleanup: `READY`, no active test lease.
 
-## Automated Evidence
+The remaining rows are not classified as DRF product failures: the canonical
+provider fixture does not expose the required live scenarios. They still block
+stable acceptance because the acceptance contract requires evidence, not a
+waiver.
 
-- `DevTools/Check-RepositoryIntegrity.ps1`: structured PASS.
-- `DevTools/Build-All.ps1`: BLOCKED; RimWorld 1.6 assemblies are unavailable.
-- `DevTools/Run-PureTests.ps1`: BLOCKED by the same missing dependencies.
-- `DevTools/Audit-Outputs.ps1`: FAIL; the checked-in assembly still reports
-  informational version `0.1.0` and must be rebuilt.
-- Provider adapter builds and provider-specific runtime tests remain the
-  responsibility of consuming repositories.
+Adjacent regions remain disabled by default and experimental; this boundary
+does not waive any mandatory supported core case.
 
-## Latest Runtime Attempt
 
-- `Wildlife\DevTools\Run-WildlifeTests.ps1 -TimeoutSeconds 60` returned
-  `summary=SERVER_TIMEOUT`; no `READY`/`DONE` status or test report was produced.
-  The spawned `RimWorldWin64` process was stopped after the timeout.
-- `RimWorldDevBridge\DevTools\devbridge.ps1 discover` returned
-  `{"available":false,"reason":"bridge_not_active"}`.
-- `Player.log` reached RimWorld 1.6.4871 assembly loading, Prepatcher completion,
-  and mod loading. No Deferred Reality undefined-target exception appeared in
-  the captured log, but the test server never became ready, so this is not a
-  startup or gameplay pass.
+## RC2 Qualification
 
-Adjacent regions must remain disabled until every manual row has attached live
-evidence.
+Status: `NOT ACCEPTED — Frontier smoke and lifecycle-specific live evidence remain incomplete`
+
+RC2 framework evidence:
+
+- Release build, pure regression executable, repository integrity, and output
+  audit: PASS.
+- Canonical DRF affected/runtime workflow
+  `rw-9f89b4b1479c41dea97f2160ab4a6b12`: PASS.
+- RC2 assembly SHA-256:
+  `cfbe5d2438c58be8112dffba1efe3044fd8119d9cbf579bda581266cc32280b3`.
+- RC2 package SHA-256:
+  `0678ea4c49831fcfcdcbe08977fa4711bc4c0ee283bca8b76f57eb4cfc116719`.
+
+Frontier evidence:
+
+- Release source build: PASS.
+- Canonical `runtime-gaps` workflow
+  `rw-8f9c1722a6e8480ea6e994380a8601d8`: PASS, 3/3.
+- Canonical `smoke` workflows `rw-df469206201d4b85be4ffc8b8697d57c` and
+  `rw-7cfa75b862a2435f85d0a60d73870392`: BLOCKED by
+  `DEVBRIDGE_INTERNAL_TRANSACTION_FAILED` before test execution.
+- The new provider return-gate control is present in the separated fixture
+  surface, but no catalog scenario currently drives a real DRF ticket through
+  `Returning` with `Pending` and `Ready`; those lifecycle rows remain
+  unexecuted.
+
+RC.1 artifacts, hashes, and tag remain unchanged. RC2 is not recommended for
+stable promotion until the blocked Frontier smoke and lifecycle-specific live
+matrix are rerun through canonical RimTest/RimLiaison.

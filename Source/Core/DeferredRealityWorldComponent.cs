@@ -1722,6 +1722,12 @@ namespace DeferredReality.API
             RealityThreadGuard.RequireMainThread();
             if (!excursionById.TryGetValue(excursionId ?? string.Empty, out RealityExcursionTicket ticket) ||
                 RealityRetentionPolicy.IsTerminalExcursion(ticket) || ticket.status == RealityExcursionStatus.Quarantined) return false;
+            if (ticket.status == RealityExcursionStatus.Returning)
+            {
+                if (!string.IsNullOrEmpty(diagnostic)) ticket.diagnostic = diagnostic;
+                Touch("excursion.return-requested", ticket.providerId, ticket.destinationRegionId, ticket.excursionId);
+                return true;
+            }
             ticket.status = status;
             ticket.retryTick = Now;
             ticket.diagnostic = diagnostic;

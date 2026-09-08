@@ -8,7 +8,7 @@ namespace DeferredReality.API
     public static class DeferredRealityFrameworkInfo
     {
         /// <summary>Semantic framework version for this release candidate.</summary>
-        public const string Version = "0.1.0-rc.1";
+        public const string Version = "0.1.0-rc.2";
 
         /// <summary>CLR assembly version used for binary compatibility.</summary>
         public const string AssemblyVersion = "0.1.0.0";

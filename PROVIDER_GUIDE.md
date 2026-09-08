@@ -12,7 +12,7 @@ the generic boundary but do not replace provider gameplay or live RimWorld tests
 ## Versioning and registration
 
 The release-candidate framework identity is exposed by
-`DeferredRealityFrameworkInfo.Version` (`0.1.0-rc.1`), and the exact loaded
+`DeferredRealityFrameworkInfo.Version` (`0.1.0-rc.2`), and the exact loaded
 assembly identity is available through `BuildIdentity`. Provider registrations
 must set `semanticApiVersion` to
 `DeferredRealityFrameworkInfo.SupportedProviderApiVersion` (`1`). Other values
@@ -356,6 +356,13 @@ active combat, drafted/mental/medical/sleep/carried states, player-forced jobs,
 and provider-owned jobs must remain unsafe. Provider transfer hosts must preserve
 the Pawn instance and implement reverse rollback so return can use the exact
 origin map and inverse edge.
+When a provider must finish an owned task or unload a provider-side resource
+before the inverse leg, it may implement `IRealityExcursionReturnGate`. The
+framework enters the durable `Returning` state before calling this gate; a
+`Pending` disposition records bounded diagnostic/backoff and performs no
+transfer, while `Ready` permits the existing inverse transfer service. An
+absent gate is treated as `Ready`, so existing providers retain their contract.
+
 
 Do not create a durable ticket before outbound commit. The framework creates it
 only after the host confirms the exact Pawn on the declared destination. It marks

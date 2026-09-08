@@ -231,7 +231,7 @@ region; subject identity is never used without that provider/type scope.
 Duplicate repair keeps the first serialized valid slot unless an explicit newer
 update tick proves a later current record newer. There is no root or child save
 schema negotiation: DRF has one current record shape, frozen as the
-`v0.1.0-rc.1` compatibility baseline. Pre-release saves are supported only when
+`v0.1.0-rc.2` compatibility baseline. Pre-release saves are supported only when
 they already use this current shape; DRF makes no historical schema 3/4/5
 guarantee or general pre-release migration promise. Invalid or conflicting
 records are quarantined deterministically. Unknown provider payloads and
@@ -282,6 +282,14 @@ Providers may expose task observation, explicit heartbeat/completion/abandon hoo
 and terminal runtime cleanup. Fresh bounded evidence may renew a lease; unchanged
 or absent evidence cannot renew indefinitely. Once a lease expires, only the
 provider-neutral safe-idle fallback may request return.
+Return authorization has an explicit durable boundary: a due `ReturnRequested`
+or expired `Active` ticket is first persisted as `Returning`, and that monitor
+invocation ends before any inverse transfer is attempted. Later passes process
+only `Returning`. An optional provider `IRealityExcursionReturnGate` may keep
+that state `Pending` with bounded backoff; `Ready` or an absent gate permits the
+existing transactional inverse transfer. Transfer failure deliberately returns
+to `ReturnRequested` through the existing retry path.
+
 
 Monitoring is coarse and gated by active maps, nonterminal/recoverable tickets,
 pending intents, or unresolved journals. Historical completed tickets alone do

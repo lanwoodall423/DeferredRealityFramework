@@ -202,6 +202,12 @@
         <member name="T:DeferredReality.API.IRealityExcursionTaskCleanupProvider">
             <summary>Optional runtime cleanup after an excursion task becomes terminal and unrecoverable.</summary>
         </member>
+        <member name="T:DeferredReality.API.IRealityExcursionReturnGate">
+            <summary>
+            Optional provider gate for the inverse leg of an excursion. The framework treats
+            an absent gate as Ready and never transfers while the gate reports Pending.
+            </summary>
+        </member>
         <member name="T:DeferredReality.API.RealityExcursionTaskObservation">
             <summary>Bounded evidence supplied by an integration for an excursion task or lease.</summary>
         </member>
@@ -706,6 +712,9 @@
         </member>
         <member name="T:DeferredReality.API.RealityExcursionStatus">
             <summary>Durable lifecycle of a bounded excursion ticket.</summary>
+        </member>
+        <member name="T:DeferredReality.API.RealityExcursionReturnDisposition">
+            <summary>Provider disposition for whether an excursion Pawn may begin its inverse transfer.</summary>
         </member>
         <member name="T:DeferredReality.API.RealityProviderCapability">
             <summary>Capabilities advertised by a provider.</summary>
@@ -1232,6 +1241,9 @@
         </member>
         <member name="M:DeferredReality.Materialization.RealityAdjacentPolicy.IsSafeIdleJob(System.String,System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Boolean,System.Boolean)">
             <summary>Pure fallback classification: only no-job and explicit idle jobs are safe to return.</summary>
+        </member>
+        <member name="M:DeferredReality.Materialization.RealityAdjacentPolicy.EvaluateReturn(DeferredReality.API.IRealityExcursionReturnGate,DeferredReality.API.RealityExcursionTicket,System.Int64,System.String@)">
+            <summary>Resolves the optional provider return gate without allowing provider failure to authorize transfer.</summary>
         </member>
         <member name="T:DeferredReality.Materialization.RealityAdjacentSurfaceService">
             <summary>Opt-in experimental cardinal surface connections and safe transfer facade.</summary>

@@ -6,7 +6,7 @@ current record shape rather than a root/child schema negotiation layer. There
 is no explicit root schema number, pre-release migration layer, or compatibility
 alias table.
 
-`v0.1.0-rc.1` freezes this current record shape as the first public compatibility
+`v0.1.0-rc.2` freezes this current record shape as the current public compatibility
 baseline. A save from a pre-release build is supported only when it already
 uses the same current field names and record types; DRF does not claim support
 for historical schema 3/4/5 labels or infer migrations for them.
@@ -162,7 +162,12 @@ ID, retry, terminal tick, status, and diagnostics. Providers may expose fresh ta
 observations and explicit completion/abandon hooks; without reliable evidence, the
 bounded lease expires and only conservative idle fallback may request return. The
 world monitor runs at a coarse interval, returns only safely idle Pawns, and uses
-retry backoff for unsafe, missing-origin, or unavailable-provider states. Warm-map
+retry backoff for unsafe, missing-origin, or unavailable-provider states. The
+excursion ticket's persisted `status` is authoritative across save/load,
+including `Returning`; `retryTick` and `diagnostic` are persisted with it. A
+ticket that has crossed the `Returning` boundary therefore remains in that
+state after reload and is evaluated by the next monitor pass. A provider return
+gate reporting `Pending` does not reset the ticket or authorize transfer. Warm-map
 eviction is recency ordered and requires returned Pawns, no player
 or recovery references, successful provider compression, and a real registered map
 factory removal.

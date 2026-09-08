@@ -47,7 +47,7 @@ temporary site representing a `core` `Surface(tile)` region.
 
 ## Save compatibility baseline
 
-`v0.1.0-rc.1` is the first public compatibility baseline. Existing/pre-release
+`v0.1.0-rc.2` is the current public compatibility baseline. Existing/pre-release
 saves are supported only when they already use the current DRF field names and
 record types. DRF repairs absent optional collections and preserves unknown
 provider payloads and missing-provider records, but it has no root schema
