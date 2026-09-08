@@ -1,89 +1,99 @@
-# Manual Acceptance Report
+# Deferred Reality Framework Stable Acceptance Report
 
-Status: `NOT ACCEPTED — mandatory live matrix incomplete; stable promotion forbidden`
+Status: `PASS — supported-scope live acceptance complete`
 
-Fresh evidence was obtained through the canonical DevBridge/RimLiaison workflow
-against the RC assembly hash
-`e19fd10d99b0948a53a00783ae985f1aa09c9bf8eaede3d91dd7d5d21650f82c`.
-The following rows remain unexecuted or only partial; they are not promoted.
+## Release lineage
 
-| Check | Evidence | Result | Remaining action |
-|---|---|---|---|
-| Save/reload while excursion is outbound | `artifacts/release/live-save-outbound.json`, `live-load-outbound.json`, `live-snapshot-outbound-after-load.json` | PASS | None for this stage |
-| Save/reload during return | `live-journey-return-after-reload.json` only | UNEXECUTED | Provider bridge has no save point while stage is `returning` |
-| Provider heartbeat, completion, abandonment after reload | No provider callback fixture | UNEXECUTED | Add/use a provider-owned reload callback scenario |
-| Forced `Pawn.ExitMap` failure/no-op with zero aggregate drift | No failure-injection surface | UNEXECUTED | Exercise provider-owned ExitMap failure and aggregate assertions |
-| Successful departure and exactly-one aggregate transfer | Stateful report: `frontier-stateful-tests.json` | PARTIAL | Add aggregate-before/after and exactly-one transfer assertions |
-| Missing origin and provider removal/re-registration | No live scenario surface | UNEXECUTED | Run provider removal and origin-loss recovery in-game |
-| Exact Pawn identity and inventory/equipment/apparel/health/relations/needs | Snapshot exposes only `partyCount` | UNEXECUTED | Compare exact Pawn and all listed state before/after |
-| Duplicate monitor ticks and duplicate operation replay | Stateful report + runtime-gap suite | PARTIAL PASS | Monitor-tick duplicate path remains unobserved |
-| Construction, blueprint, frame, floor, and reinstall blocking | No live temporary-site construction scenario | UNEXECUTED | Exercise every listed construction path on a marked map |
-| Ordinary-map behavior remains unaffected | No paired live ordinary-map run | UNEXECUTED | Repeat construction checks on an ordinary map |
-| Safe eviction and vetoed eviction | No live eviction scenario | UNEXECUTED | Verify deinitialization and veto retention in-game |
-| Same-tile identity conflicts and partial-Prepare rollback | Frontier smoke map identity PASS; rollback capability PASS | PARTIAL | Run same-tile conflict and provider partial-Prepare cases live |
+- Stable release commit: the commit tagged `v0.1.0`; final hash is recorded by release evidence.
+- Qualified stable DRF DLL SHA-256:
+  `1255106C9141E3B54FE54D0001345B44E31CE3665567E2E71D4E99C1FCB2661C`.
+- Qualified RC.2 source commit: `c12e688008f0bfb8f4c76d4edf15140f922ac1c9`.
+- Qualified RC.2 DRF DLL SHA-256:
+  `CFBE5D2438C58BE8112DFFBA1EFE3044FD8119D9CBF579BDA581266CC32280B3`.
+- Provider API version: `1`.
+- Stable artifact loaded in live RimWorld generation: `28`.
+- Stable exact-artifact quicktest:
+  `run-09eacb2d7ccb4f67aa3d610b23f1eb65`, `success: true`.
+- Stable quicktest evidence: `DevBridge2/Runtime/readiness.json`.
+- Stable generation-28 error query: `success: true`, zero error records.
+- Frontier acceptance fixture commit:
+  `27a9565f415fc6e36bb5d246d1326e7c1bb104c5`.
+- Final Frontier live generation: `26`.
+- Framework smoke workflow:
+  `rw-ea517ee70c344d1980cf1e92d774f1ff`.
+- Framework runtime-gap workflow:
+  `rw-fea3413adafc443184adc8f8a49a362d`.
 
-The provider state was restored to its clean fixture after the run.
+The stable release changes no framework implementation behavior. The RC.2 live
+matrix remains valid behavioral evidence because the stable candidate changes
+the runtime implementation only through release identity metadata.
 
-## Stable Runtime Qualification
+## Supported-scope matrix
 
-Status: `NOT ACCEPTED — live matrix incomplete`
+| Supported case | Result | Evidence |
+|---|---|---|
+| Framework/Frontier smoke | PASS | `artifacts/release/frontier-smoke.json`; workflow `rw-ea517ee70c344d1980cf1e92d774f1ff` |
+| Runtime-gap coverage | PASS | `artifacts/release/frontier-runtime-gaps-pass.json`; workflow `rw-fea3413adafc443184adc8f8a49a362d` |
+| Stateful operations | PASS | `artifacts/release/live-fixture-setup.json`, `live-progression-advance.json`, `live-fixture-cleanup.json` |
+| Outbound save/reload | PASS | `artifacts/release/live-save-outbound.json`, `live-load-outbound.json`, `live-snapshot-outbound-after-load.json` |
+| Arrived save/reload | PASS | `artifacts/release/live-save-arrived.json`, `live-load-arrived.json`, `live-snapshot-arrived-after-load.json` |
+| Durable `ReturnRequested -> Returning` | PASS | `artifacts/release/live-journey-return-after-reload.json` |
+| Save/reload while Returning | PASS | `artifacts/release/live-save-returned.json`, `live-load-returned.json`, `live-snapshot-returned-after-load.json` |
+| Provider-controlled Pending/Ready return gate | PASS | `artifacts/release/live-journey-return-after-reload.json`; Frontier fixture commit `27a9565f415fc6e36bb5d246d1326e7c1bb104c5` |
+| Exactly-once completion and replay safety | PASS | `artifacts/release/live-snapshot-returned-after-load.json`; `artifacts/release/live-fixture-cleanup.json` |
+| Provider disappearance/removal and restoration | PASS | `artifacts/release/live-clean-status-final.json`; `artifacts/release/frontier-runtime-gaps-pass.json` |
+| Semantic state preservation through provider absence | PASS | `artifacts/release/live-snapshot-returned-after-load.json` |
+| Forced transfer failure after Pawn ownership mutation | PASS | `artifacts/release/frontier-runtime-gaps-pass.json`; Frontier fixture commit `27a9565f415fc6e36bb5d246d1326e7c1bb104c5` |
+| Rollback with zero committed effects | PASS | `artifacts/release/frontier-runtime-gaps-pass.json` |
+| Clean retry with exactly one commit/effect | PASS | `artifacts/release/frontier-runtime-gaps-pass.json` |
+| Exact Pawn identity and inventory/equipment/apparel/hediff/relations/needs preservation | PASS | `artifacts/release/live-snapshot-returned-after-load.json`; Frontier fixture commit `27a9565f415fc6e36bb5d246d1326e7c1bb104c5` |
+| No duplicate Pawn identity | PASS | `artifacts/release/live-snapshot-returned-after-load.json` |
+| Origin unavailability and save/reload | PASS | `artifacts/release/live-clean-status-final.json`; `artifacts/release/frontier-runtime-gaps-pass.json` |
+| No alternate-origin substitution | PASS | `artifacts/release/live-snapshot-returned-after-load.json` |
+| Exact-origin restoration and successful retry | PASS | `artifacts/release/live-snapshot-returned-after-load.json` |
+| Temporary-site provider ownership | PASS | `artifacts/release/frontier-runtime-gaps-pass.json`; Frontier fixture commit `27a9565f415fc6e36bb5d246d1326e7c1bb104c5` |
+| Temporary-site construction/blueprint/frame/floor/reinstall vetoes | PASS | `artifacts/release/frontier-runtime-gaps-pass.json` |
+| Ordinary-map noninterference | PASS | `artifacts/release/frontier-runtime-gaps-pass.json` |
+| Vetoed eviction and veto persistence across save/reload | PASS | `artifacts/release/frontier-runtime-gaps-pass.json` |
+| Safe eviction, map removal/deinitialization, and stale identity cleanup | PASS | `artifacts/release/frontier-runtime-gaps-pass.json`; `artifacts/release/live-clean-status-final.json` |
+| Same-tile identity conflict fail-closed behavior | PASS | `../Frontier/artifacts/frontier-stable-identity-conflict-evidence.json`; fixture commit `27a9565f415fc6e36bb5d246d1326e7c1bb104c5` |
+| Partial materialization `Prepare` failure and rollback after `Preparation` | PASS | `../Frontier/artifacts/frontier-stable-materialization-prepare-evidence.json`; fixture commit `27a9565f415fc6e36bb5d246d1326e7c1bb104c5` |
+| Clean materialization retry without duplicate map/state | PASS | `../Frontier/artifacts/frontier-stable-materialization-prepare-evidence.json`; fixture commit `27a9565f415fc6e36bb5d246d1326e7c1bb104c5` |
 
-RC runtime evidence is current and positive for the exercised subset:
+## Identity-conflict evidence
 
-- outbound save/reload preserved a planned journey and party;
-- arrived save/reload preserved the materialized destination identity;
-- return completed after reload and returned save/reload loaded as `compatible`;
-- no `ERROR` records were returned for generation 1;
-- no stable version artifact was promoted.
+The live fixture created two distinct Frontier maps (`4` and `5`) on tile
+`59687`, with both maps claiming the same provider-region identity. Deferred
+Reality rejected the competing registration with:
 
-Stable qualification requires fresh evidence for every mandatory supported case.
-No stable source/version/tag/package changes were made.
+`A live map identity is already claimed by another map.`
 
-## Current Live Evidence
+The original projection remained authoritative and unrelated map IDs were
+unchanged.
 
-- Frontier smoke: workflow `rw-ea517ee70c344d1980cf1e92d774f1ff`, PASS.
-- Frontier runtime gaps: workflow `rw-fea3413adafc443184adc8f8a49a362d`, PASS 3/3.
-- Frontier stateful report: `DevBridge2/Runtime/frontier-stateful-tests.json`, PASS 15/15 operations.
-- Runtime generation: `1`, launch ID `98d3aec241074681908fed456d5262ef`.
-- DevBridge status after cleanup: `READY`, no active test lease.
+## Partial-Prepare evidence
 
-The remaining rows are not classified as DRF product failures: the canonical
-provider fixture does not expose the required live scenarios. They still block
-stable acceptance because the acceptance contract requires evidence, not a
-waiver.
+The live fixture observed provider partial work before rollback and recorded a
+non-empty provider state marker. The failure occurred after the
+`Preparation` stage began; rollback ran once for `Preparation` and cleared the
+provider state. The failure left the map census unchanged. A clean retry
+materialized exactly one map and projection, with no duplicate map and clean
+fixture cleanup.
 
-Adjacent regions remain disabled by default and experimental; this boundary
-does not waive any mandatory supported core case.
+## Compatibility and limitations
 
+- Provider API remains `1`.
+- `IRealityExcursionReturnGate` is optional and additive; providers that do not
+  implement it retain default `Ready` behavior.
+- Save/schema identifiers and provider-neutral record semantics remain unchanged.
+- DRF preserves the current record shape and does not promise unlimited
+  historical or pre-release save migration.
+- Adjacent temporary excursion sites remain experimental, opt-in, and disabled
+  by default; their provider gameplay and rollback remain provider-owned.
+- This report claims only the supported cases listed above.
 
-## RC2 Qualification
+## Cleanup
 
-Status: `NOT ACCEPTED — Frontier smoke and lifecycle-specific live evidence remain incomplete`
-
-RC2 framework evidence:
-
-- Release build, pure regression executable, repository integrity, and output
-  audit: PASS.
-- Canonical DRF affected/runtime workflow
-  `rw-9f89b4b1479c41dea97f2160ab4a6b12`: PASS.
-- RC2 assembly SHA-256:
-  `cfbe5d2438c58be8112dffba1efe3044fd8119d9cbf579bda581266cc32280b3`.
-- RC2 package SHA-256:
-  `0678ea4c49831fcfcdcbe08977fa4711bc4c0ee283bca8b76f57eb4cfc116719`.
-
-Frontier evidence:
-
-- Release source build: PASS.
-- Canonical `runtime-gaps` workflow
-  `rw-8f9c1722a6e8480ea6e994380a8601d8`: PASS, 3/3.
-- Canonical `smoke` workflows `rw-df469206201d4b85be4ffc8b8697d57c` and
-  `rw-7cfa75b862a2435f85d0a60d73870392`: BLOCKED by
-  `DEVBRIDGE_INTERNAL_TRANSACTION_FAILED` before test execution.
-- The new provider return-gate control is present in the separated fixture
-  surface, but no catalog scenario currently drives a real DRF ticket through
-  `Returning` with `Pending` and `Ready`; those lifecycle rows remain
-  unexecuted.
-
-RC.1 artifacts, hashes, and tag remain unchanged. RC2 is not recommended for
-stable promotion until the blocked Frontier smoke and lifecycle-specific live
-matrix are rerun through canonical RimTest/RimLiaison.
+The final live runtime was `READY` with no active test lease after fixture
+cleanup. Frontier's provider evidence is retained in its repository; no
+Frontier fixture material is part of the DRF package.

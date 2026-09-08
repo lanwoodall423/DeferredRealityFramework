@@ -231,7 +231,7 @@ region; subject identity is never used without that provider/type scope.
 Duplicate repair keeps the first serialized valid slot unless an explicit newer
 update tick proves a later current record newer. There is no root or child save
 schema negotiation: DRF has one current record shape, frozen as the
-`v0.1.0-rc.2` compatibility baseline. Pre-release saves are supported only when
+`v0.1.0` compatibility baseline. Pre-release saves are supported only when
 they already use this current shape; DRF makes no historical schema 3/4/5
 guarantee or general pre-release migration promise. Invalid or conflicting
 records are quarantined deterministically. Unknown provider payloads and

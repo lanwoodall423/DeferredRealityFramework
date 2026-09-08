@@ -3,7 +3,7 @@
   <name>Deferred Reality Framework</name>
   <author>Lan</author>
   <packageId>lan.deferredreality.framework</packageId>
-  <modVersion>0.1.0-rc.2</modVersion>
+  <modVersion>0.1.0</modVersion>
   <url>https://github.com/lanwoodall423/DeferredRealityFramework</url>
   <supportedVersions><li>1.6</li></supportedVersions>
   <description>A deterministic, compatibility-first framework for persistent regions, aggregate populations, deferred outcomes, observations, and safe fidelity transitions. It helps compatible mods simulate their worlds consistently while they are off-screen. Players get stable, predictable world updates even when areas are not loaded.</description>

@@ -11,12 +11,12 @@ the generic boundary but do not replace provider gameplay or live RimWorld tests
 
 ## Versioning and registration
 
-The release-candidate framework identity is exposed by
-`DeferredRealityFrameworkInfo.Version` (`0.1.0-rc.2`), and the exact loaded
-assembly identity is available through `BuildIdentity`. Provider registrations
-must set `semanticApiVersion` to
-`DeferredRealityFrameworkInfo.SupportedProviderApiVersion` (`1`). Other values
-are rejected before the provider enters the registry, with a diagnostic naming
+The stable framework identity is exposed by
+`DeferredRealityFrameworkInfo.Version` (`0.1.0`), and the exact loaded assembly
+identity is available through `BuildIdentity`. Provider registrations must set
+`semanticApiVersion` to
+`DeferredRealityFrameworkInfo.SupportedProviderApiVersion` (`1`).
+Other values are rejected before the provider enters the registry, with a diagnostic naming
 the provider and both API versions.
 
 The registry snapshots registration metadata during successful registration.

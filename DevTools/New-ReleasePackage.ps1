@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '0.1.0-rc.2',
+    [string]$Version = '0.1.0',
     [string]$OutputRoot = ''
 )
 
@@ -112,7 +112,7 @@ try {
 
     $sourceAssemblyVersion = $expectedAssemblyVersion
     $sourceFileVersion = $expectedAssemblyVersion
-    $sourceInformationalVersion = $expectedVersion + '+release-candidate'
+    $sourceInformationalVersion = $expectedVersion
     $sourceIdentityMatches = (
         -not [string]::IsNullOrWhiteSpace($expectedVersion) -and
         -not [string]::IsNullOrWhiteSpace($expectedAssemblyVersion)

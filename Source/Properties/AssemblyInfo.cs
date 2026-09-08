@@ -5,5 +5,5 @@ using System.Reflection;
 #if DEBUG
 [assembly: AssemblyInformationalVersion(DeferredReality.API.DeferredRealityFrameworkInfo.Version + "+development")]
 #else
-[assembly: AssemblyInformationalVersion(DeferredReality.API.DeferredRealityFrameworkInfo.Version + "+release-candidate")]
+[assembly: AssemblyInformationalVersion(DeferredReality.API.DeferredRealityFrameworkInfo.Version)]
 #endif

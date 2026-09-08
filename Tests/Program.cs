@@ -586,7 +586,7 @@ namespace DeferredReality.PureTests
 
         private static void ProviderRegistrationCompatibilityContracts()
         {
-            Require(DeferredRealityFrameworkInfo.Version == "0.1.0-rc.2" &&
+            Require(DeferredRealityFrameworkInfo.Version == "0.1.0" &&
                 DeferredRealityFrameworkInfo.SupportedProviderApiVersion == 1 &&
                 !string.IsNullOrEmpty(DeferredRealityFrameworkInfo.BuildIdentity),
                 "framework identity did not expose the release and provider API versions");

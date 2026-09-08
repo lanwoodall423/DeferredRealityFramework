@@ -6,7 +6,7 @@ current record shape rather than a root/child schema negotiation layer. There
 is no explicit root schema number, pre-release migration layer, or compatibility
 alias table.
 
-`v0.1.0-rc.2` freezes this current record shape as the current public compatibility
+`v0.1.0` freezes this current record shape as the current public compatibility
 baseline. A save from a pre-release build is supported only when it already
 uses the same current field names and record types; DRF does not claim support
 for historical schema 3/4/5 labels or infer migrations for them.

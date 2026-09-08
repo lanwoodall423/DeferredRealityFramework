@@ -9,16 +9,19 @@ DRF is a framework for consuming mods, not standalone gameplay content. A
 consuming mod supplies its own provider and owns gameplay-specific maps, pawns,
 objects, and live-world behavior.
 
-## Compatibility and v0.1.0-rc.2 scope
+## Compatibility and v0.1.0 scope
 
 - RimWorld **1.6**
 - Harmony (**brrainz.harmony**)
 - .NET Framework 4.7.2 for development/building
 
-`v0.1.0-rc.2` freezes the provider-neutral framework surface and begins the
-documented 0.1.x compatibility baseline. Provider IDs, persisted identifiers,
-and provider contracts are public integration boundaries; downstream providers
-remain responsible for their own gameplay and live acceptance coverage.
+`v0.1.0` is the first stable release of the provider-neutral framework
+surface. Provider IDs, persisted identifiers, and provider contracts are public
+integration boundaries; downstream providers remain responsible for their own
+gameplay and live acceptance coverage.
+
+Live provider integration acceptance is complete for the supported scope recorded
+in [the acceptance report](MANUAL_ACCEPTANCE_REPORT.md).
 
 For the complete release scope, compatibility details, architecture, save-format
 rules, and consumer setup, see the [Release Notes](RELEASE_NOTES.md),
@@ -31,7 +34,7 @@ the distribution license is [LICENSE](LICENSE).
 ## Installation
 
 1. Install Harmony (`brrainz.harmony`) and place it before DRF in RimWorld's mod list.
-2. Download `DeferredRealityFramework-0.1.0-rc.2.zip` from the release and
+2. Download `DeferredRealityFramework-0.1.0.zip` from the release and
    extract its `DeferredRealityFramework` folder into the game's `Mods` directory.
 3. Enable **Deferred Reality Framework** after Harmony.
 4. Enable a consuming mod that lists DRF as a dependency.
@@ -48,7 +51,6 @@ and live acceptance coverage remain the consuming mod's responsibility.
 ## Experimental adjacent regions
 
 Adjacent temporary excursion sites are **experimental**, **opt-in**, and
-**disabled by default**. They are not part of the v0.1.0-rc.2 compatibility
-guarantee, and this release candidate makes no live or manual acceptance claim.
+**disabled by default**. They are not part of the v0.1.0 compatibility guarantee.
 Repository-only acceptance material is omitted from the end-user package.
 

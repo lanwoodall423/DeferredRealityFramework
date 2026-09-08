@@ -47,14 +47,14 @@ temporary site representing a `core` `Surface(tile)` region.
 
 ## Save compatibility baseline
 
-`v0.1.0-rc.2` is the current public compatibility baseline. Existing/pre-release
+`v0.1.0` is the current public compatibility baseline. Existing/pre-release
 saves are supported only when they already use the current DRF field names and
 record types. DRF repairs absent optional collections and preserves unknown
 provider payloads and missing-provider records, but it has no root schema
 negotiation, historical schema 3/4/5 guarantee, pre-release migration layer, or
 map-ID alias table.
 
-The RC guarantee covers the current provider-neutral record shape, stable
+The stable guarantee covers the current provider-neutral record shape, stable
 identifiers, registration contract, and opaque provider payloads across the
 0.1.x line, subject to the repair rules in `SAVE_FORMAT.md`.
 

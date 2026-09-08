@@ -8,7 +8,7 @@
             <summary>Authoritative framework release and provider-contract identity.</summary>
         </member>
         <member name="F:DeferredReality.API.DeferredRealityFrameworkInfo.Version">
-            <summary>Semantic framework version for this release candidate.</summary>
+            <summary>Semantic framework version for this stable release.</summary>
         </member>
         <member name="F:DeferredReality.API.DeferredRealityFrameworkInfo.AssemblyVersion">
             <summary>CLR assembly version used for binary compatibility.</summary>

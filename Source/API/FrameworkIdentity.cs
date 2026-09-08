@@ -7,8 +7,8 @@ namespace DeferredReality.API
     /// <summary>Authoritative framework release and provider-contract identity.</summary>
     public static class DeferredRealityFrameworkInfo
     {
-        /// <summary>Semantic framework version for this release candidate.</summary>
-        public const string Version = "0.1.0-rc.2";
+        /// <summary>Semantic framework version for this stable release.</summary>
+        public const string Version = "0.1.0";
 
         /// <summary>CLR assembly version used for binary compatibility.</summary>
         public const string AssemblyVersion = "0.1.0.0";
@@ -23,7 +23,7 @@ namespace DeferredReality.API
         public static string BuildIdentity => LoadedInformationalVersion;
 
         /// <summary>Whether this assembly was built as a development build.</summary>
-        public static bool IsDevelopmentBuild => !LoadedInformationalVersion.EndsWith("+release-candidate", StringComparison.Ordinal);
+        public static bool IsDevelopmentBuild => LoadedInformationalVersion.EndsWith("+development", StringComparison.Ordinal);
 
         private static readonly string LoadedInformationalVersion = ReadInformationalVersion();
 

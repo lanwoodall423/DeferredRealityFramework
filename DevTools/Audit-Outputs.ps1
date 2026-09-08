@@ -9,7 +9,7 @@ $releaseBuildPath = Join-Path $root 'Source\obj\Release\DeferredRealityFramework
 $identitySource = Get-Content -LiteralPath (Join-Path $root 'Source\API\FrameworkIdentity.cs') -Raw
 $expectedVersion = ([regex]::Match($identitySource, 'public const string Version = "([^"]+)"')).Groups[1].Value
 $expectedAssemblyVersion = ([regex]::Match($identitySource, 'public const string AssemblyVersion = "([^"]+)"')).Groups[1].Value
-$expectedInformationalVersion = $expectedVersion + '+release-candidate'
+$expectedInformationalVersion = $expectedVersion
 $forbiddenReferences = @('Wildlife', 'Herds', 'Aquaculture', 'Horticulture', 'PacksAndPredators')
 $checks = New-Object System.Collections.Generic.List[object]
 $failures = New-Object System.Collections.Generic.List[string]
